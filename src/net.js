@@ -1,6 +1,6 @@
-// Peer-to-peer networking over WebRTC, using the public PeerJS signalling service.
-// Nothing runs on a server of ours: the host player's browser is the authority, every other
-// player connects straight to it. That is what lets multiplayer work from a static Vercel deploy.
+// Peer-to-peer networking over WebRTC, using our same-origin PeerJS signalling service.
+// The host player's browser remains the game authority. Players connect directly when possible
+// and automatically use our TURN relay when NAT or firewall rules prevent a direct path.
 //
 // Lobby codes are just peer ids. A private lobby takes a random 5 letter code; a public lobby
 // claims one of a handful of well-known ids (PUB0..PUB7) so quick play can find it by knocking on
@@ -9,11 +9,35 @@
 
 // a local dev server gets its own namespace so testing can never wander into a live lobby
 const LOCAL = typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-const PREFIX = LOCAL ? 'doodledev-' : 'doodledistrict-';
+// Keep this deployment's lobby IDs separate from the public original site.
+const PREFIX = LOCAL ? 'doodledev-' : 'cmp-doodle-';
 const PUBLIC_SLOTS = 16;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const makeCode = () => Array.from({ length: 5 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-const PEER_OPTS = { debug: 0, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] } };
+const BASE_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+const SIGNALING_OPTIONS = LOCAL ? {} : {
+  host: location.hostname,
+  port: Number(location.port) || (location.protocol === 'https:' ? 443 : 80),
+  path: '/peerjs',
+  secure: location.protocol === 'https:',
+};
+let turnCache = null, turnRequest = null;
+async function peerOptions() {
+  const now = Date.now();
+  if (!LOCAL && turnCache && turnCache.expiresAt - now > 60000) return { ...SIGNALING_OPTIONS, debug: 0, config: { iceServers: [...BASE_ICE_SERVERS, turnCache.iceServer] } };
+  if (!LOCAL) {
+    if (!turnRequest) turnRequest = fetch('/turn-credentials', { cache: 'no-store', credentials: 'same-origin' })
+      .then(async (res) => { if (!res.ok) throw new Error(`TURN credentials returned ${res.status}`); return res.json(); })
+      .then((d) => {
+        if (!d || !Array.isArray(d.urls) || !d.urls.length || !d.username || !d.credential) throw new Error('TURN credentials were incomplete');
+        turnCache = { iceServer: { urls: d.urls, username: d.username, credential: d.credential }, expiresAt: Number(d.expiresAt) * 1000 || now + 5 * 60 * 1000 };
+      })
+      .catch((err) => { console.warn('TURN relay unavailable; trying direct WebRTC only', err); })
+      .finally(() => { turnRequest = null; });
+    await turnRequest;
+  }
+  return { ...SIGNALING_OPTIONS, debug: 0, config: { iceServers: turnCache ? [...BASE_ICE_SERVERS, turnCache.iceServer] : BASE_ICE_SERVERS } };
+}
 const JOIN_TIMEOUT = 14000, QUICK_TIMEOUT = 11000, SIGNAL_TIMEOUT = 12000;
 
 function peerAvailable() { return typeof window !== 'undefined' && typeof window.Peer === 'function'; }
@@ -30,10 +54,11 @@ export class Net {
   on(type, fn) { this.handlers.set(type, fn); }
   _emit(type, data, from) { const h = this.handlers.get(type); if (h) h(data, from); }
 
-  _newPeer(id) {
+  async _newPeer(id) {
+    if (!peerAvailable()) throw new Error('networking library did not load');
+    const opts = await peerOptions();
     return new Promise((resolve, reject) => {
-      if (!peerAvailable()) return reject(new Error('networking library did not load'));
-      const peer = new window.Peer(id, PEER_OPTS); let settled = false;
+      const peer = new window.Peer(id, opts); let settled = false;
       const timer = setTimeout(() => { if (!settled) { settled = true; peer.destroy(); reject(new Error('signalling server timed out')); } }, SIGNAL_TIMEOUT);
       peer.on('open', () => { if (settled) return; settled = true; clearTimeout(timer); resolve(peer); });
       peer.on('error', (err) => { if (settled) return; settled = true; clearTimeout(timer); peer.destroy(); reject(err); });
@@ -115,7 +140,7 @@ export class Net {
   // try every public slot at the same time and take the first host that says welcome
   async quickJoin(meta = {}, onStatus = null) {
     this.leave(); this.isHost = false; this.peer = await this._newPeer(null); this.id = this.peer.id; this._keepAlive(this.peer);
-    if (onStatus) onStatus('正在寻找开放的大厅…');
+    if (onStatus) onStatus('looking for an open lobby…');
     const ids = []; for (let i = 0; i < PUBLIC_SLOTS; i++) for (const suf of ['', '-1', '-2', '-3']) ids.push(PREFIX + 'PUB' + i + suf);
     const winner = await new Promise((resolve) => {
       let pending = ids.length, done = false; const attempts = [], offers = []; let gather = null;
@@ -129,7 +154,7 @@ export class Net {
       for (const hostId of ids) {
         let conn; try { conn = this.peer.connect(hostId, { reliable: true, serialization: 'json', metadata: probeMeta }); } catch (e) { pending--; continue; }
         const a = { conn, hostId, done: false }; attempts.push(a);
-        conn.on('data', (msg) => { if (!msg || a.done) return; if (msg.t === 'welcome') { a.done = true; pending--; offers.push({ conn, hostId, welcome: msg.d }); if (onStatus) onStatus(`找到 ${offers.length} 个开放大厅…`); if (pending <= 0) settle(); else if (!gather) gather = setTimeout(settle, 1500); } else if (msg.t === 'refused') failOne(a); });
+        conn.on('data', (msg) => { if (!msg || a.done) return; if (msg.t === 'welcome') { a.done = true; pending--; offers.push({ conn, hostId, welcome: msg.d }); if (onStatus) onStatus(`found ${offers.length} open ${offers.length === 1 ? 'lobby' : 'lobbies'}…`); if (pending <= 0) settle(); else if (!gather) gather = setTimeout(settle, 1500); } else if (msg.t === 'refused') failOne(a); });
         conn.on('error', () => failOne(a)); conn.on('close', () => failOne(a));
       }
       if (pending <= 0) settle();
@@ -155,7 +180,7 @@ export class Net {
       for (const hostId of ids) {
         let conn; try { conn = peer.connect(hostId, { reliable: true, serialization: 'json', metadata: probeMeta }); } catch (e) { pending--; continue; }
         const a = { conn, hostId, done: false }; attempts.push(a);
-        conn.on('data', (msg) => { if (!msg || a.done) return; if (msg.t === 'welcome' || msg.t === 'refused') { a.done = true; pending--; const d = msg.d || {}; offers.push({ id: hostId.slice(PREFIX.length), code: d.code || hostId.slice(PREFIX.length), players: d.players || 0, max: d.max || 10, inMatch: !!d.inMatch, hostName: d.hostName || '', full: msg.t === 'refused' }); if (onStatus) onStatus(`找到 ${offers.length} 个…`); if (pending <= 0) settle(); else if (!gather) gather = setTimeout(settle, 2200); } });
+        conn.on('data', (msg) => { if (!msg || a.done) return; if (msg.t === 'welcome' || msg.t === 'refused') { a.done = true; pending--; const d = msg.d || {}; offers.push({ id: hostId.slice(PREFIX.length), code: d.code || hostId.slice(PREFIX.length), players: d.players || 0, max: d.max || 10, inMatch: !!d.inMatch, hostName: d.hostName || '', full: msg.t === 'refused' }); if (onStatus) onStatus(`found ${offers.length}…`); if (pending <= 0) settle(); else if (!gather) gather = setTimeout(settle, 2200); } });
         conn.on('error', () => failOne(a)); conn.on('close', () => failOne(a));
       }
       if (pending <= 0) settle();

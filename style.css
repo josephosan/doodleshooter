@@ -1,5 +1,5 @@
 :root { --ink: #1a30c0; --red: #d02030; --paper: #f6f3e6; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); font-family: 'Comic Sans MS', 'Marker Felt', 'Segoe Print', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); font-family: 'Patrick Hand', 'Caveat', 'Comic Sans MS', 'Marker Felt', 'Segoe Print', cursive; }
 canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
 #hud { position: fixed; inset: 0; pointer-events: none; color: var(--ink); user-select: none; overflow: hidden; }
 .hud-tl, .hud-tr, .hud-bl, .hud-br, .crosshair, .grapple-ret, .hitmarker, .dmg-ind, .message, .killfeed { mix-blend-mode: multiply; }
@@ -199,6 +199,44 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .pvpscore .row.me { color: var(--red); }
 .pvpscore .row .rank { opacity: .6; }
 .pvpscore .target { font-size: 15px; opacity: .65; margin-top: 2px; }
+
+/* red vs yellow team mode */
+.redteam { color: #d02030 !important; }
+.yellowteam { color: #c99700 !important; }
+.teamchoice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 5px auto 10px; }
+.teamchoice > span { font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+.teamchoice button { min-width: 150px; border-color: currentColor; background: rgba(250,248,238,.82); }
+.teamchoice button.on { color: #fff !important; box-shadow: 3px 4px 0 var(--ink); transform: translate(-1px,-1px) rotate(-.4deg); }
+.teamchoice button.redteam.on { background: #d02030; }
+.teamchoice button.yellowteam.on { background: #c99700; color: #17150f !important; }
+.teamroster { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(240px, 1fr); gap: 18px; align-items: start; width: min(760px, 92vw); margin: 4px auto; }
+.teamroster section { border: 3px solid currentColor; border-radius: 10px 14px 9px 12px / 12px 9px 14px 10px; padding: 8px 10px 10px; background: rgba(250,248,238,.78); }
+.teamroster h3, .scoreteam h4 { margin: 0 0 5px; font-size: 27px; letter-spacing: 2px; }
+.teamroster .plist { min-width: 0; color: inherit; }
+.teamroster .plist div { border-bottom-color: currentColor; }
+.teamroster .me { background: rgba(255,255,255,.55); font-weight: bold; }
+.teamvs { align-self: center; font-size: 30px; opacity: .6; }
+.emptyteam { justify-content: center !important; opacity: .55; font-size: 18px; }
+.teamhud { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 25px; }
+.teamhud .teamline { display: flex; gap: 7px; align-items: baseline; }
+.teamhud .teamline b { font-size: 34px; }
+.teamhud .versus { font-size: 15px; opacity: .55; }
+.pvpscore .youteam { font-size: 15px; opacity: .9; margin-top: 1px; }
+.teamsummary { display: flex; justify-content: center; align-items: baseline; gap: 22px; font-size: 31px; margin: 2px 0 10px; }
+.teamsummary span { display: flex; gap: 10px; }
+.teamsummary b { font-size: 42px; }
+.teamsummary i { font-style: normal; font-size: 18px; opacity: .55; }
+.teamboards, .teamresults { display: grid !important; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; min-width: 620px; }
+.scoreteam { border: 2.5px solid currentColor; border-radius: 8px 11px 7px 10px; padding: 7px; }
+.scoreteam div { color: inherit; }
+.scoreteam .me { background: rgba(255,255,255,.65); font-weight: bold; }
+.teamresults .scoreteam { min-width: 260px; }
+
+@media (max-width: 760px) {
+  .teamroster { grid-template-columns: 1fr; gap: 7px; }
+  .teamvs { display: none; }
+  .teamboards, .teamresults { grid-template-columns: 1fr; min-width: min(88vw, 420px); }
+}
 
 /* grapple breath: a sliver under the crosshair, only while it is not full */
 .gstam { position: absolute; left: 50%; top: 50%; width: 64px; height: 5px; margin-left: -32px; margin-top: 26px; border: 1.5px solid var(--ink); border-radius: 3px; opacity: .8; mix-blend-mode: multiply; }

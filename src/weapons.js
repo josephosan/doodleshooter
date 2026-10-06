@@ -1,4 +1,4 @@
-// First-person view models + firing logic: rifle, shotgun, revolver (hitscan) and katana.
+// First-person view models + firing logic: rifle, sniper, revolver (hitscan) and katana.
 import * as THREE from 'three';
 import { makeInkMaterial, INK } from './render.js';
 import { SEE_THROUGH } from './physics.js';
@@ -63,10 +63,9 @@ class ViewModel {
 }
 
 const GUNS = {
-  rifle: { name: '步枪', hint: '全自动 · 让红点对准他们', kind: 'rifle', magSize: 35, reserve: 175, maxReserve: 350, interval: 1 / 11, damage: 24, headMul: 2.6, pellets: 1, spread: 0.016, adsSpread: 0.0034, spreadKick: 0.009, spreadMax: 0.075, adsFov: 58, sight: [0, 0.12, -0.05, 0.3], camKick: [0.009, 0.0034], modelKick: [0.25, 0.3, 2.4, -3.2, 0.9, 1.2], fovKick: 1.2, reloadDur: 1.45, reloadType: 'mag', auto: true, falloff: null, tracer: 0.02, flashScale: 1, sound: 'shot', shell: [0.02, INK.ORANGE], moveSpread: 0.0012, pvp: [19, 1.8, null] },
-  shotgun: { name: '霰弹枪', hint: '泵动 · 近距离威力惊人', kind: 'shotgun', magSize: 6, reserve: 36, maxReserve: 72, interval: 0.78, damage: 19, headMul: 1.8, pellets: 10, spread: 0.062, adsSpread: 0.034, spreadKick: 0, spreadMax: 0.1, adsFov: 68, sight: [0, 0.095, -1.0, 0.52], camKick: [0.05, 0.012], modelKick: [0.4, 0.6, 5, -9, 2, 3], fovKick: 4, reloadDur: 0.45, reloadType: 'shells', auto: false, falloff: [11, 32, 0.22], tracer: 0.014, flashScale: 1.9, sound: 'shotgunFire', shell: [0.035, INK.RED], moveSpread: 0.0006, cycleDur: 0.45, pvp: [16, 1.6, [9, 26, 0.15]] },
-  sniper: { name: '狙击枪', hint: '栓动狙击 · 一枪一个擦除', kind: 'sniper', scope: true, magSize: 5, reserve: 25, maxReserve: 50, interval: 0.2, damage: 150, headMul: 3, pellets: 1, spread: 0.075, adsSpread: 0.0004, spreadKick: 0.05, spreadMax: 0.14, adsFov: 20, sight: [0, 0.135, 0, 0.42], camKick: [0.055, 0.008], modelKick: [0.25, 0.8, 4.5, -11, 1.2, 2], fovKick: 4.5, reloadDur: 2.1, reloadType: 'mag', auto: false, falloff: null, tracer: 0.03, flashScale: 1.7, sound: 'sniperFire', shell: [0.03, INK.ORANGE], moveSpread: 0.004, cycleDur: 0.85, pvp: [150, 1.5, null] },
-  revolver: { name: '左轮手枪', hint: '手炮 · 爆头即擦除', kind: 'revolver', magSize: 6, reserve: 36, maxReserve: 72, interval: 0.3, damage: 62, headMul: 3, pellets: 1, spread: 0.006, adsSpread: 0.002, spreadKick: 0.02, spreadMax: 0.06, adsFov: 52, sight: [0, 0.08, -0.34, 0.42], camKick: [0.038, 0.007], modelKick: [0.3, 0.9, 3.2, -10, 1.5, 2.5], fovKick: 2.5, reloadDur: 1.9, reloadType: 'cylinder', auto: false, falloff: null, tracer: 0.026, flashScale: 1.35, sound: 'revolver', shell: null, moveSpread: 0.0015, pvp: [52, 2.9, [9, 34, 0.42]] },
+  rifle: { name: 'RIFLE', hint: 'auto · put the red dot on them', kind: 'rifle', magSize: 35, reserve: 175, maxReserve: 350, interval: 1 / 11, damage: 24, headMul: 2.6, pellets: 1, spread: 0.016, adsSpread: 0.0034, spreadKick: 0.009, spreadMax: 0.075, adsFov: 58, sight: [0, 0.12, -0.05, 0.3], camKick: [0.009, 0.0034], modelKick: [0.25, 0.3, 2.4, -3.2, 0.9, 1.2], fovKick: 1.2, reloadDur: 1.45, reloadType: 'mag', auto: true, falloff: null, tracer: 0.02, flashScale: 1, sound: 'shot', shell: [0.02, INK.ORANGE], moveSpread: 0.0012, pvp: [19, 1.8, null] },
+  sniper: { name: 'SNIPER', hint: 'scoped bolt action · one shot, one erasure', kind: 'sniper', scope: true, magSize: 5, reserve: 25, maxReserve: 50, interval: 0.2, damage: 150, headMul: 3, pellets: 1, spread: 0.075, adsSpread: 0.0004, spreadKick: 0.05, spreadMax: 0.14, adsFov: 20, sight: [0, 0.135, 0, 0.42], camKick: [0.055, 0.008], modelKick: [0.25, 0.8, 4.5, -11, 1.2, 2], fovKick: 4.5, reloadDur: 2.1, reloadType: 'mag', auto: false, falloff: null, tracer: 0.03, flashScale: 1.7, sound: 'sniperFire', shell: [0.03, INK.ORANGE], moveSpread: 0.004, cycleDur: 0.85, pvp: [150, 1.5, null] },
+  revolver: { name: 'REVOLVER', hint: 'hand cannon · headshots erase', kind: 'revolver', magSize: 6, reserve: 36, maxReserve: 72, interval: 0.3, damage: 62, headMul: 3, pellets: 1, spread: 0.006, adsSpread: 0.002, spreadKick: 0.02, spreadMax: 0.06, adsFov: 52, sight: [0, 0.08, -0.34, 0.42], camKick: [0.038, 0.007], modelKick: [0.3, 0.9, 3.2, -10, 1.5, 2.5], fovKick: 2.5, reloadDur: 1.9, reloadType: 'cylinder', auto: false, falloff: null, tracer: 0.026, flashScale: 1.35, sound: 'revolver', shell: null, moveSpread: 0.0015, pvp: [52, 2.9, [9, 34, 0.42]] },
 };
 
 export class Gun extends ViewModel {
@@ -137,13 +136,12 @@ export class Gun extends ViewModel {
     this.flash.visible = true; this.flashT = 0.045; this.flash.rotation.z = rand(0, TAU); this.flash.scale.setScalar(this.flashScale * rand(0.8, 1.4));
     this.muzzle.getWorldPosition(_v); _v2.copy(P.forward);
     ctx.effects.strokeBurst(_v, INK.ORANGE, 4 + this.pellets, 6 * this.flashScale, { life: 0.08, size: 0.03, gravity: 0, drag: 8 });
-    ctx.effects.smoke(_v, _v2, this.kind === 'shotgun' ? 5 : 2);
+    ctx.effects.smoke(_v, _v2, 2);
     if (this.shell && this.reloadType !== 'shells') this._ejectShell();
     if (this.cycleDur) { this.pumpT = this.cycleDur + 0.12; this.pumped = false; if (this.reloadType === 'shells') this.needPump = true; }
     const k = this.modelKick; this.recoil.kick(rand(-k[0], k[0]), rand(k[1] * 0.4, k[1]), k[2]); this.recoilRot.kick(k[3], rand(-k[4], k[4]), rand(-k[5], k[5]));
     P.recoil(this.camKick[0] * (st.aim ? 0.7 : 1) + rand(0, this.camKick[0] * 0.3), rand(-this.camKick[1], this.camKick[1])); P.kickFov(this.fovKick);
     audio[this.sound](); ctx.input.rumble(0.15 + this.fovKick * 0.08, 0.5, 40 + this.fovKick * 15); ctx.effects.shakeAmt += 0.02 + this.fovKick * 0.02;
-    if (hits > 0 && this.kind === 'shotgun') ctx.game.hitstop(0.03, 0.3);
     if (this.mag === 0 && this.reloadType === 'mag') setTimeout(() => { if (this.mag === 0 && !this.reloading) this.startReload(); }, 250);
   }
   fireRay(origin, dir) {
@@ -188,21 +186,6 @@ export class Rifle extends Gun {
     this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.02, -0.98); g.add(this.muzzle);
     this.ejectPt = new THREE.Object3D(); this.ejectPt.position.set(0.06, 0.02, 0.02); g.add(this.ejectPt);
     this.flash = makeFlash(g, 0, 0.02, -0.98, 1);
-  }
-}
-export class Shotgun extends Gun {
-  constructor(ctx) { super(ctx, 'shotgun'); this.basePos.set(0.2, -0.19, -0.34); }
-  build() {
-    const g = this.root, mat = this.mat, dark = this.dark;
-    bx(0.09, 0.13, 0.42, 0, 0, 0.05, mat, g); cyl(0.021, 0.92, 0, 0.05, -0.62, dark, g); cyl(0.019, 0.72, 0, -0.02, -0.5, mat, g);
-    this.foreEnd = bx(0.078, 0.085, 0.27, 0, 0.01, -0.46, mat, g); this.foreEndZ = -0.46;
-    const stock = bx(0.07, 0.12, 0.34, 0, -0.04, 0.42, mat, g); stock.rotation.x = 0.08; const grip = bx(0.05, 0.13, 0.06, 0, -0.13, 0.16, mat, g); grip.rotation.x = 0.35;
-    sph(0.013, 0, 0.095, -1.0, this.red, g, 6); bx(0.03, 0.025, 0.02, 0, 0.085, -0.02, dark, g);
-    hand(mat, 0.02, -0.16, 0.17, g, [0.5, -0.6, 1]); this.handL = hand(mat, -0.04, -0.06, -0.45, g, [-0.35, -0.9, 0.9]); this.handLPos = this.handL.position.clone();
-    this.handL.userData.foreEnd = true;
-    this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.05, -1.09); g.add(this.muzzle);
-    this.ejectPt = new THREE.Object3D(); this.ejectPt.position.set(0.06, 0.03, 0.05); g.add(this.ejectPt);
-    this.flash = makeFlash(g, 0, 0.05, -1.09, 1);
   }
 }
 export class Revolver extends Gun {
@@ -251,7 +234,7 @@ export class Sniper extends Gun {
 
 export class Katana extends ViewModel {
   constructor(ctx) {
-    super(ctx); this.name = '太刀'; this.hint = '挥砍 · 按住瞄准格挡并反弹子弹'; this.kind = 'katana';
+    super(ctx); this.name = 'KATANA'; this.hint = 'slash · hold aim to block & return bullets'; this.kind = 'katana';
     this.basePos.set(0.27, -0.25, -0.4); this.baseRot.set(0.75, 0.15, -0.35); this.aimPos.copy(this.basePos);
     this.slashT = 0; this.slashDur = 0.27; this.combo = 0; this.comboT = 0; this.blocking = false; this.blockT = 0; this.blockAmt = 0; this.hitDone = false; this.cooldown = 0; this.damage = 75;
     // guard pose: the sword simply comes in close to the face, held upright

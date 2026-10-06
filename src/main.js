@@ -44,15 +44,18 @@ const ctx = { scene: R.scene, camera: R.camera, world, level, nav, input, hud, e
 let best = Number(localStorage.getItem('doodle_best') || 0);
 let musicWanted = localStorage.getItem('doodle_music') !== '0';
 let checkpoint = Number(localStorage.getItem('doodle_checkpoint') || 0);
-let myName = (localStorage.getItem('doodle_name') || '').slice(0, 14) || '涂鸦' + Math.floor(Math.random() * 90 + 10);
+let myName = (localStorage.getItem('doodle_name') || '').slice(0, 14) || 'doodle' + Math.floor(Math.random() * 90 + 10);
 const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1' };
 function applySettings() {
   input.mouseSens = 0.0022 * settings.sens / 100; input.padSensX = 3.4 * settings.sens / 100; input.padSensY = 2.6 * settings.sens / 100; input.invertY = settings.invert;
   localStorage.setItem('doodle_sens', String(settings.sens)); localStorage.setItem('doodle_invert', settings.invert ? '1' : '0');
 }
 // ---------------- game state ----------------
-const FFA_TARGET = 20, FFA_TIME = 600, RESPAWN = 2.5;
-let matchLeft = FFA_TIME, clockT = 0, clockRunning = false;
+const TEAM_TARGET = 20, MATCH_TIME = 600, RESPAWN = 2.5;
+const TEAM_RED = 0, TEAM_YELLOW = 1;
+const TEAM_NAMES = ['RED TEAM', 'YELLOW TEAM'];
+const TEAM_INK = [INK.RED, INK.YELLOW];
+let matchLeft = MATCH_TIME, clockT = 0, clockRunning = false;
 const mmss = (t) => { t = Math.max(0, Math.ceil(t)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
 const game = ctx.game = {
   state: 'start', mode: 'solo', menu: false, time: 0, hitstopT: 0, hitstopScale: 1, wave: 0, score: 0, combo: 0, comboT: 0, kills: 0, intermission: 0, queue: [], spawnT: 0, maxAlive: 6, deathT: 0,
@@ -61,20 +64,29 @@ const game = ctx.game = {
   addScore(pts, label) { const mult = 1 + Math.min(this.combo, 9) * 0.25; const p = Math.round(pts * mult); this.score += p; if (label) hud.kill(label, p); hud.setScore(this.score, this.combo); },
   onPlayerDeath() { endFocus(); onLocalDeath(); },
 };
-const online = () => game.mode === 'ffa';
+const online = () => game.mode === 'team';
 const enemies = ctx.enemies = new EnemyManager(ctx);
 const player = ctx.player = new Player(ctx);
 player.name = myName;
 const net = new Net();
 const remote = new Map();      // peer id -> RemotePlayer
 const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null };
-const scores = new Map();      // peer id -> { name, kills, deaths }
+const scores = new Map();      // peer id -> { name, team, kills, deaths }
+const validTeam = (team) => team === TEAM_RED || team === TEAM_YELLOW;
+const teamInk = (team) => TEAM_INK[validTeam(team) ? team : TEAM_RED];
+const teamName = (team) => TEAM_NAMES[validTeam(team) ? team : TEAM_RED];
+const teamOf = (id) => {
+  if (id === net.id && validTeam(player.team)) return player.team;
+  const p = lobby.players.get(id); if (p && validTeam(p.team)) return p.team;
+  const s = scores.get(id); if (s && validTeam(s.team)) return s.team;
+  const r = remote.get(id); return r && validTeam(r.team) ? r.team : null;
+};
 let screen = 'main';           // which start-screen panel is showing: main | online | lobby
 window.__game = { ctx, game, player, enemies, nav, world, level, hud, effects, input, net, remote, lobby, scores };
 
 // anything a bullet or a blade can hit besides enemies
 ctx.targets = () => [player, ...remote.values()];
-ctx.canHurt = (t) => online() && t !== player;
+ctx.canHurt = (t) => online() && t !== player && validTeam(t.team) && t.team !== player.team;
 ctx.raycastPlayers = (o, d, maxDist) => {
   let best = null;
   for (const t of remote.values()) {
@@ -105,16 +117,16 @@ ctx.hitPlayer = (t, dmg, info) => {
     effects.strokeBurst(info.point, INK.ORANGE, 8, 6, { life: 0.22, size: 0.035 }); audio.shieldHit(t.center);
     const ret = Math.random() < 0.4;
     if (ret) {
-      effects.tracer(info.point, player.eye, INK.RED, 0.03, 0.08); hud.tip('被弹回', 0.9); input.rumble(0.5, 0.4, 90);
+      effects.tracer(info.point, player.eye, INK.RED, 0.03, 0.08); hud.tip('RETURNED', 0.9); input.rumble(0.5, 0.4, 90);
       player.lastHitBy = t.id; player.lastHit = { from: t.center.toArray(), crit: false, amount: dmg * 0.6, src: 'deflect' }; player.takeDamage(dmg * 0.6, t.center);
-    } else hud.tip('被弹开', 0.7);
+    } else hud.tip('DEFLECTED', 0.7);
     net.sendTo(t.id, 'parry', { ret, by: net.id });
     return;
   }
   const facing = t.blocking ? _v.subVectors(player.center, t.center).normalize().dot(t.forward) : -1;
   const frontHit = /^(head|torso|arm|fore)/.test(info.part || '');
   // a slash is only parried by a guard that just came up and faces you
-  if (facing > 0.6 && frontHit && info.source === 'katana' && t.parryWindow) { effects.strokeBurst(info.point, INK.ORANGE, 10, 6, { life: 0.25, size: 0.04 }); audio.shieldHit(t.center); game.hitstop(0.08, 0.15); player.weapons[player.katanaIndex].cooldown = Math.max(player.weapons[player.katanaIndex].cooldown, 0.6); input.rumble(0.6, 0.3, 90); hud.tip('被格挡', 0.9); return; }
+  if (facing > 0.6 && frontHit && info.source === 'katana' && t.parryWindow) { effects.strokeBurst(info.point, INK.ORANGE, 10, 6, { life: 0.25, size: 0.04 }); audio.shieldHit(t.center); game.hitstop(0.08, 0.15); player.weapons[player.katanaIndex].cooldown = Math.max(player.weapons[player.katanaIndex].cooldown, 0.6); input.rumble(0.6, 0.3, 90); hud.tip('PARRIED', 0.9); return; }
   effects.blood(info.point, info.dir, clamp(0.4 + dmg / 80, 0.4, 1.6), { ink: INK.RED }); hud.hitmarker(false, info.crit); audio.hitEnemy(t.center); t.flash();
   net.sendTo(t.id, 'pdmg', { amount: Math.round(dmg), from: player.center.toArray().map((v) => +v.toFixed(1)), by: net.id, crit: !!info.crit, src: info.source });
 };
@@ -123,12 +135,12 @@ const _rp = new THREE.Vector3(), _rq = new THREE.Vector3();
 ctx.cutRopes = (eye, dir, range) => {
   let cut = false;
   for (const r of remote.values()) {
-    if (!r.alive || !r.grappling) continue;
+    if (!r.alive || !r.grappling || !ctx.canHurt(r)) continue;
     _rp.set(r.body.pos.x + r.right.x * 0.35, r.body.pos.y + 1.25, r.body.pos.z + r.right.z * 0.35);
     for (let i = 0; i <= 14; i++) {
       _rq.lerpVectors(_rp, r.gPoint, i / 14).sub(eye); const t = _rq.dot(dir); if (t < 0.3 || t > range) continue;
       const lat = Math.sqrt(Math.max(0, _rq.lengthSq() - t * t)); if (lat > 0.9) continue;
-      _rq.add(eye); effects.strokeBurst(_rq, INK.ORANGE, 10, 5, { life: 0.25, size: 0.035 }); net.sendTo(r.id, 'cut', {}); hud.tip('绳索切断', 0.9); cut = true; break;
+      _rq.add(eye); effects.strokeBurst(_rq, INK.ORANGE, 10, 5, { life: 0.25, size: 0.035 }); net.sendTo(r.id, 'cut', {}); hud.tip('ROPE CUT', 0.9); cut = true; break;
     }
   }
   return cut;
@@ -156,7 +168,7 @@ function breakProp(br, dir, local, quiet = false) {
   if (br.kind === 'pinata') {
     for (const ink of [INK.PINK, INK.ORANGE, INK.GREEN]) effects.strokeBurst(pos, ink, 16, 7, { life: 0.7, size: 0.05 });
     effects.explosion(pos, 2.5, INK.PINK); if (!net.active || net.isHost) for (let i = 0; i < 2; i++) spawnPickup('health', pos.clone().add(new THREE.Vector3(rand(-1.2, 1.2), 0, rand(-1.2, 1.2))));
-    if (game.mode === 'solo') game.addScore(25, '皮纳塔');
+    if (game.mode === 'solo') game.addScore(25, 'PIÑATA');
   } else if (br.kind === 'cactus') { effects.blood(pos, d, 1.4, { ink: INK.GREEN }); effects.bloodPool(new THREE.Vector3(pos.x, 0, pos.z), 1.1, INK.GREEN); }
   else { effects.strokeBurst(pos, br.ink, 12, 5, { life: 0.35, size: 0.04 }); effects.smoke(pos, up, 3); }
   audio.smash(pos, br.kind === 'barrel' || br.kind === 'crate' || br.kind === 'cactus');
@@ -186,7 +198,7 @@ function spawnPickup(kind, pos, id = null) {
 }
 function removePickup(p) { R.scene.remove(p.mesh); const i = pickups.indexOf(p); if (i >= 0) pickups.splice(i, 1); }
 function collectPickup(p) {
-  if (p.kind === 'ammo') { player.addAmmoAll(0.4); player.grenades = Math.min(player.maxGrenades, player.grenades + 1); hud.kill('+弹药 · +手雷', 0); } else { player.hp = Math.min(player.maxHp, player.hp + 35); hud.kill(level.key === 'mexico' ? '塔可 · +35 生命' : '+35 生命', 0); }
+  if (p.kind === 'ammo') { player.addAmmoAll(0.4); player.grenades = Math.min(player.maxGrenades, player.grenades + 1); hud.kill('+AMMO · +GRENADE', 0); } else { player.hp = Math.min(player.maxHp, player.hp + 35); hud.kill(level.key === 'mexico' ? 'TACO · +35 HP' : '+35 HP', 0); }
   audio.pickup(); effects.strokeBurst(p.mesh.position, p.kind === 'ammo' ? INK.BLUE : INK.GREEN, 12, 4, { life: 0.3 });
 }
 function updatePickups(dt) {
@@ -213,25 +225,25 @@ const ROSTER = [
 ];
 const MODIFIERS = [
   { name: '', apply: () => { enemies.mods.speed = 1; enemies.mods.damage = 1; } },
-  { name: '咖啡因 · 移动更快', apply: () => { enemies.mods.speed = 1.35; enemies.mods.damage = 0.85; } },
-  { name: '重墨 · 打人更疼', apply: () => { enemies.mods.speed = 0.9; enemies.mods.damage = 1.4; } },
-  { name: '蜂群 · 数量更多、个体更脆', apply: () => { enemies.mods.speed = 1.15; enemies.mods.damage = 0.9; } },
+  { name: 'CAFFEINATED · they move fast', apply: () => { enemies.mods.speed = 1.35; enemies.mods.damage = 0.85; } },
+  { name: 'HEAVY INK · they hit harder', apply: () => { enemies.mods.speed = 0.9; enemies.mods.damage = 1.4; } },
+  { name: 'SWARM · more of them, thinner', apply: () => { enemies.mods.speed = 1.15; enemies.mods.damage = 0.9; } },
 ];
 const tips = () => [
-  `按住 <b>${hud.key('grapple')}</b> 收绳 · 摆动途中再按一次即可松手`,
-  `用 <b>${hud.key('block')}</b> 格挡，部分子弹会反弹回去`,
-  '空中击杀得分更高 · 尽量别落地',
-  `<b>${hud.key('grenade')}</b> 掷出手雷 · 拾取物可补充手雷`,
-  `在空中再按一次 <b>${hud.key('jump')}</b> 可二段跳`,
+  `hold <b>${hud.key('grapple')}</b> to reel in · tap it again to let go mid-swing`,
+  `block with <b>${hud.key('block')}</b> and some of their bullets go back at them`,
+  'kills in the air are worth more · stay off the floor',
+  `<b>${hud.key('grenade')}</b> lobs a grenade · pickups give you more`,
+  `press <b>${hud.key('jump')}</b> again in the air for a double jump`,
 ];
 const bossFor = (n) => BOSSES[(Math.floor(n / 5) - 1) % BOSSES.length];
-const enemyName = (t) => ({ boss: '涂鸦魔王', eraser: '橡皮魔王', inkblot: '墨渍魔王' })[t] || t.toUpperCase();
+const enemyName = (t) => ({ boss: 'THE DOODLER', eraser: 'THE ERASER', inkblot: 'THE INKBLOT' })[t] || t.toUpperCase();
 function startWave(n) {
   game.wave = n; game.queue = []; game.spawnT = 2; game.intermission = 0; game.boss = null; hud.setBoss(null, null);
   const boss = n > 0 && n % 5 === 0;
   const allowed = boss || n < 4 ? 1 : n < 6 ? 3 : MODIFIERS.length; const mod = MODIFIERS[Math.floor(Math.random() * allowed)];
   mod.apply(); enemies.mods.damage *= 1.2; hud.setModifier(mod.name);
-  const swarm = mod.name.startsWith('蜂群');
+  const swarm = mod.name.startsWith('SWARM');
   // the crowd on screen and the wave size both keep growing with the wave number
   game.maxAlive = Math.min(4 + Math.floor(n * 0.9) + (swarm ? 3 : 0), (swarm ? 22 : 18) + Math.floor(n / 3));
   let count = Math.round(Math.min(5 + n * 2.0, 32 + n) * (swarm ? 1.35 : 1));
@@ -239,13 +251,13 @@ function startWave(n) {
   const pool = ROSTER.filter((r) => n >= r.from).map((r) => ({ t: r.t, w: r.w * Math.min(1, 0.3 + 0.25 * (n - r.from)) }));
   const total = pool.reduce((a, r) => a + r.w, 0);
   for (let i = 0; i < count; i++) { let r = Math.random() * total, t = pool[0].t; for (const c of pool) { r -= c.w; if (r <= 0) { t = c.t; break; } } game.queue.push(t); }
-  if (boss) { hud.message('第 ' + n + ' 波', enemyName(bossFor(n)) + ' 正在逼近', 3); audio.bossRoar(player.center); }
-  else hud.message('第 ' + n + ' 波', n === 1 ? '它们正从纸面外爬进来' : mod.name || choose(['画得更用力些', '继续涂涂画画', '别待在地面上', '挥刀上吧', '把子弹弹回去']), 2.6);
+  if (boss) { hud.message('WAVE ' + n, enemyName(bossFor(n)) + ' IS COMING', 3); audio.bossRoar(player.center); }
+  else hud.message('WAVE ' + n, n === 1 ? 'they are crawling off the page' : mod.name || choose(['ink harder', 'keep scribbling', 'stay off the ground', 'swing for it', 'return their bullets']), 2.6);
   audio.wave();
   if (n <= tips().length) hud.tip(tips()[n - 1], 7);
   player.grenades = Math.min(player.maxGrenades, player.grenades + 1);
   for (let i = 0; i < 7; i++) spawnPickup(i < 5 ? 'ammo' : 'health', choose(level.pickups));
-  if (n >= 5 && n % 5 === 0 && n > checkpoint) { checkpoint = n; localStorage.setItem('doodle_checkpoint', String(n)); hud.kill('检查点 · 第 ' + n + ' 波', 0); }
+  if (n >= 5 && n % 5 === 0 && n > checkpoint) { checkpoint = n; localStorage.setItem('doodle_checkpoint', String(n)); hud.kill('CHECKPOINT · WAVE ' + n, 0); }
 }
 function pickSpawn(type) {
   const spots = type === 'sniper' ? level.snipers : level.spawns; const pp = player.body.pos;
@@ -264,7 +276,7 @@ function pickSpawn(type) {
 }
 function updateWaves(dt) {
   if (game.intermission > 0) {
-    game.intermission -= dt; hud.setTimer('下一波还有 ' + Math.ceil(game.intermission) + ' 秒');
+    game.intermission -= dt; hud.setTimer('next wave in ' + Math.ceil(game.intermission));
     if (game.intermission <= 0) { hud.setTimer(''); startWave(game.wave + 1); }
     return;
   }
@@ -276,7 +288,7 @@ function updateWaves(dt) {
     }
   }
   if (!game.queue.length && enemies.alive === 0) {
-    game.intermission = 8; hud.message('第 ' + game.wave + ' 波已清除', '喘口气 · +' + 200 * game.wave, 2.5);
+    game.intermission = 8; hud.message('WAVE ' + game.wave + ' CLEARED', 'catch your breath · +' + 200 * game.wave, 2.5);
     game.addScore(200 * game.wave, null); audio.waveClear(); player.hp = Math.min(player.maxHp, player.hp + 40);
   }
   hud.setWave(game.wave, enemies.alive + game.queue.length);
@@ -284,14 +296,14 @@ function updateWaves(dt) {
 enemies.onKill = (e, info, over) => {
   game.kills++; game.combo++; game.comboT = 3.5;
   let label = e.T.name, pts = e.T.score;
-  if (info.crit) { label = '爆头'; pts += 60; }
-  if (info.source === 'katana') { label = over ? '一刀两断' : '斩落'; pts += 50; }
-  if (info.source === 'focus') { label = '处决'; pts += 150; }
+  if (info.crit) { label = 'HEADSHOT'; pts += 60; }
+  if (info.source === 'katana') { label = over ? 'SLICED' : 'CUT DOWN'; pts += 50; }
+  if (info.source === 'focus') { label = 'EXECUTED'; pts += 150; }
   if (info.source === 'katana' || info.source === 'focus') { game.katanaStreak++; player.weapons[player.katanaIndex].addBlood(0.42); if (game.katanaStreak >= KATANA_CHARGE_KILLS) enterFocus(); }
   else if (info.source !== 'blast') game.katanaStreak = 0;
-  if (info.source === 'deflect') { label = '原路奉还'; pts += 120; }
-  if (info.source === 'fall') label = '坠出纸面';
-  else if (!player.body.onGround && info.source !== 'deflect') { label += ' · 空中击杀'; pts += 40; }
+  if (info.source === 'deflect') { label = 'RETURN TO SENDER'; pts += 120; }
+  if (info.source === 'fall') label = 'FELL OFF THE PAGE';
+  else if (!player.body.onGround && info.source !== 'deflect') { label += ' · AIRBORNE'; pts += 40; }
   game.addScore(pts, label); audio.kill(!!info.crit || e.T.boss);
   const r = Math.random(); if (r < 0.5) spawnPickup('ammo', e.body.pos); else if (r < 0.62) spawnPickup('health', e.body.pos);
 };
@@ -316,7 +328,7 @@ function enterFocus() {
   if (online() || game.focus.chain >= FOCUS_MAX_CHAIN || !focusCandidate()) return;
   const fresh = !game.focus.active;
   game.focus.active = true; game.focus.t = FOCUS_TIME; game.focus.chain++; game.focus.arm = FOCUS_ARM; game.focus.ready = false;
-  if (fresh) { audio.focusIn(); hud.tip(`<b>斩击就绪</b> · 按住 ${hud.key('focus')} 冲刺`, 2.2); }
+  if (fresh) { audio.focusIn(); hud.tip(`<b>SLASH READY</b> · hold ${hud.key('focus')} to dash`, 2.2); }
 }
 function endFocus() { if (!game.focus.active && !game.focus.dash) return; game.focus.active = false; game.focus.target = null; game.focus.chain = 0; game.focus.dash = null; game.katanaStreak = 0; player.dashLock = false; hud.setFocusMark(null); }
 function startFocusDash(target) { game.focus.dash = { target, t: 0, trail: player.center.clone(), lastTrail: 0 }; player.dashLock = true; player.body.vel.set(0, 0, 0); audio.dash(); player.kickFov(5); input.rumble(0.5, 0.4, 120); hud.setFocusMark(null); }
@@ -340,7 +352,7 @@ function updateFocusDash(dt) {
   if (moved < 1e-4 && want > 0.05 && (d.stuckY || 0) > 0.08) { endDash(true); return true; }
   return false;
 }
-function endDash(blocked) { player.dashLock = false; game.focus.dash = null; player.body.vel.set(0, 0, 0); if (blocked) { player.weapons[player.katanaIndex].startSlash(player._weaponState(false, false, 0)); audio.katanaSwing(); hud.tip('被挡下 · 冲刺没能命中', 1.2); } }
+function endDash(blocked) { player.dashLock = false; game.focus.dash = null; player.body.vel.set(0, 0, 0); if (blocked) { player.weapons[player.katanaIndex].startSlash(player._weaponState(false, false, 0)); audio.katanaSwing(); hud.tip('blocked · the dash did not reach', 1.2); } }
 function focusExecute(target) {
   player.dashLock = false; game.focus.dash = null; player.body.vel.set(0, 0, 0);
   player.weapons[player.katanaIndex].startSlash(player._weaponState(false, false, 0));
@@ -362,8 +374,8 @@ function updateFocus(dt) {
   if (combo && f.ready && f.arm <= 0) { input.consume('fire'); startFocusDash(target); }
 }
 
-// ---------------- free for all: spawning, death, scoring ----------------
-const HOW = { rifle: '步枪', shotgun: '霰弹枪', sniper: '狙击枪', katana: '太刀', grenade: '手雷', deflect: '自己的子弹' };
+// ---------------- team deathmatch: spawning, death, scoring ----------------
+const HOW = { rifle: 'rifle', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
 const howWord = (src) => HOW[src] || null;
 const spawnSpots = () => (level.arenaSpawns && level.arenaSpawns.length ? level.arenaSpawns : level.spawns);
 function arenaSpawn() {
@@ -373,9 +385,9 @@ function arenaSpawn() {
   return choose(scored.slice(0, Math.min(3, scored.length))).s.clone();
 }
 // a spot for a late joiner: the one farthest from everybody already in the match
-function farthestSpawnIndex() {
-  const spots = spawnSpots(); const bodies = [player, ...remote.values()].filter((r) => r.alive); let best = 0, bd = -1;
-  spots.forEach((s, i) => { const d = bodies.reduce((a, r) => Math.min(a, r.body.pos.distanceTo(s)), 999); if (d > bd) { bd = d; best = i; } });
+function farthestSpawnIndex(team = player.team) {
+  const spots = spawnSpots(); const enemies = [player, ...remote.values()].filter((r) => r.alive && r.team !== team); let best = 0, bd = -1;
+  spots.forEach((s, i) => { const d = enemies.reduce((a, r) => Math.min(a, r.body.pos.distanceTo(s)), 999); if (d > bd) { bd = d; best = i; } });
   return best;
 }
 function onLocalDeath() {
@@ -387,57 +399,85 @@ function onLocalDeath() {
   if (net.isHost) tallyDeath(net.id, killer);
   game.respawnT = RESPAWN; game.state = 'dying'; game.deathT = 0;
   const kn = killer && scores.get(killer) ? scores.get(killer).name : null;
-  hud.kill(kn ? '被 ' + kn + ' 抹除' + (how ? ' · ' + how + (h.crit ? ' 爆头' : '') : '') : '被抹除', 0);
+  hud.kill(kn ? 'erased by ' + kn + (how ? ' · ' + how + (h.crit ? ' headshot' : '') : '') : 'erased', 0);
 }
 function respawnLocal() {
-  player.reset(arenaSpawn()); player.name = myName; player.lastHitBy = null; player.lastHit = null; game.state = 'play'; player.shieldT = 2; hud.tip('重生保护 · 2 秒', 1.6);
+  player.reset(arenaSpawn()); player.name = myName; player.lastHitBy = null; player.lastHit = null; game.state = 'play'; player.shieldT = 2; hud.tip('spawn protection · 2s', 1.6);
   effects.strokeBurst(player.center, INK.BLUE, 24, 6, { life: 0.5, size: 0.03 }); audio.spawn(player.center);
 }
 function tallyDeath(victim, killer) {
   const v = scores.get(victim); if (v) v.deaths++;
-  if (killer && killer !== victim) { const k = scores.get(killer); if (k) k.kills++; }
+  if (killer && killer !== victim) { const k = scores.get(killer); if (k && k.team !== (v && v.team)) k.kills++; }
   sendScores(); checkWin();
 }
 function sendScores() { const rows = [...scores.entries()].map(([id, s]) => ({ id, ...s })); net.send('score', rows); applyScores(rows); }
-function applyScores(rows) { scores.clear(); for (const r of rows) scores.set(r.id, { name: r.name, kills: r.kills, deaths: r.deaths }); refreshScoreHud(); }
+function applyScores(rows) { scores.clear(); for (const r of rows) scores.set(r.id, { name: r.name, team: validTeam(r.team) ? r.team : teamOf(r.id), kills: r.kills, deaths: r.deaths }); refreshScoreHud(); }
 function sortedScores() { return [...scores.entries()].sort((a, b) => b[1].kills - a[1].kills || a[1].deaths - b[1].deaths); }
+function teamTotals() {
+  const totals = [0, 0]; for (const s of scores.values()) if (validTeam(s.team)) totals[s.team] += s.kills;
+  return totals;
+}
+function teamRows(team) { return sortedScores().filter(([, s]) => s.team === team); }
 function refreshScoreHud() {
   if (!online()) return;
-  const rows = sortedScores(); const top = rows.slice(0, 3); const myIdx = rows.findIndex(([id]) => id === net.id);
-  if (myIdx >= 3) top.push(rows[myIdx]);
-  hud.setPvpScore(top.map(([id, sc]) => `<div class="row${id === net.id ? ' me' : ''}"><span class="rank">${rows.findIndex(([x]) => x === id) + 1}.</span><span>${esc(sc.name)}${id === net.id ? ' (你)' : ''}</span><b>${sc.kills}</b></div>`).join('') + `<div class="target">先到 ${FFA_TARGET} 杀</div>`);
-  hud.setModifier('');
+  const totals = teamTotals(); const mine = validTeam(player.team) ? player.team : TEAM_RED;
+  hud.setPvpScore(`<div class="teamhud"><div class="teamline redteam"><span>RED</span><b>${totals[TEAM_RED]}</b></div><div class="versus">VS</div><div class="teamline yellowteam"><span>YELLOW</span><b>${totals[TEAM_YELLOW]}</b></div></div><div class="target youteam ${mine === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">YOU · ${teamName(mine)} · first to ${TEAM_TARGET}</div>`);
+  hud.setModifier(teamName(mine));
   if (!hud.el.board.hidden) hud.setBoard(boardHTML());
 }
-function boardHTML(title = '自由混战') {
-  const rows = sortedScores();
-  return `<h3>${title}</h3>${rows.map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${s.name}${id === net.id ? ' (你)' : ''}</span><span>${s.kills} 杀 · ${s.deaths} 死</span></div>`).join('')}<div class="foot">先到 ${FFA_TARGET} 杀 · 还剩 ${mmss(matchLeft)} · 大厅 ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</div>`;
+function teamScoreRows(team) {
+  const rows = teamRows(team);
+  return `<section class="scoreteam ${team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}"><h4>${teamName(team)}</h4>${rows.length ? rows.map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${esc(s.name)}${id === net.id ? ' (you)' : ''}</span><span>${s.kills} K · ${s.deaths} D</span></div>`).join('') : '<div class="emptyteam">waiting for players</div>'}</section>`;
+}
+function boardHTML(title = 'TEAM DEATHMATCH') {
+  const totals = teamTotals();
+  return `<h3>${title}</h3><div class="teamsummary"><span class="redteam">RED <b>${totals[TEAM_RED]}</b></span><i>VS</i><span class="yellowteam">YELLOW <b>${totals[TEAM_YELLOW]}</b></span></div><div class="teamboards">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div><div class="foot">first team to ${TEAM_TARGET} · ${mmss(matchLeft)} left · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</div>`;
 }
 function checkWin() {
   if (!net.isHost || !online() || game.over) return;
-  let winner = null;
-  for (const [id, s] of scores) if (s.kills >= FFA_TARGET) winner = { id, name: s.name };
+  const totals = teamTotals(); let winner = null;
+  if (totals[TEAM_RED] >= TEAM_TARGET || totals[TEAM_YELLOW] >= TEAM_TARGET) { const team = totals[TEAM_YELLOW] > totals[TEAM_RED] ? TEAM_YELLOW : TEAM_RED; winner = { team, name: teamName(team) }; }
   if (winner) { net.send('end', winner); endMatch(winner); }
 }
 function endMatch(winner) {
   game.over = winner; game.overT = 0; game.state = 'over'; endFocus(); input.exitLock(); hud.setBoard(null);
-  const title = winner.id === net.id ? '你赢了' : (winner.name || '有人') + ' 获胜';
-  hud.setGameplayVisible(false); hud.showScreen(`<h1>${title}</h1><div class="scoreboard">${sortedScores().map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${s.name}</span><span>${s.kills} 杀 · ${s.deaths} 死</span></div>`).join('')}</div><div class="go" id="overGo">马上返回大厅…</div>`);
+  const title = winner.draw ? 'DRAW' : winner.team === player.team ? 'YOUR TEAM WINS' : teamName(winner.team) + ' WINS';
+  hud.setGameplayVisible(false); hud.showScreen(`<h1>${title}</h1><div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div><div class="go" id="overGo">back to the lobby in a moment…</div>`);
 }
 
 // ---------------- networking ----------------
-function addRemote(id, name) {
-  if (remote.has(id)) { const r = remote.get(id); r.name = name; return r; }
-  const rp = new RemotePlayer(ctx, id, name, 0, INK.RED);
+function addRemote(id, name, team) {
+  const assigned = validTeam(team) ? team : TEAM_RED, color = teamInk(assigned);
+  if (remote.has(id)) { const r = remote.get(id); r.name = name; r.team = assigned; r.setColor(color); return r; }
+  const rp = new RemotePlayer(ctx, id, name, assigned, color);
   rp.onDamage = (t, amount, fromPos) => { if (!ctx.canHurt(t) || !t.alive) return; hud.hitmarker(false, false); net.sendTo(t.id, 'pdmg', { amount: Math.round(amount), from: fromPos ? fromPos.toArray().map((v) => +v.toFixed(1)) : null, by: net.id, src: 'grenade' }); };
   remote.set(id, rp); return rp;
 }
 function removeRemote(id) { const r = remote.get(id); if (r) { r.dispose(); remote.delete(id); } lobby.players.delete(id); scores.delete(id); }
-function lobbyRows() { return [...lobby.players.entries()].map(([id, p]) => ({ id, name: p.name })); }
+function lobbyRows() { return [...lobby.players.entries()].map(([id, p]) => ({ id, name: p.name, team: p.team })); }
+function pickBalancedTeam() {
+  const counts = [0, 0]; for (const p of lobby.players.values()) if (validTeam(p.team)) counts[p.team]++;
+  return counts[TEAM_RED] === counts[TEAM_YELLOW] ? (Math.random() < 0.5 ? TEAM_RED : TEAM_YELLOW) : (counts[TEAM_RED] < counts[TEAM_YELLOW] ? TEAM_RED : TEAM_YELLOW);
+}
+function ensureLobbyTeams() {
+  if (!net.isHost || inMatch()) return;
+  for (const [id, p] of lobby.players) if (!validTeam(p.team)) { p.team = pickBalancedTeam(); if (id === net.id) player.team = p.team; else addRemote(id, p.name, p.team); }
+}
 function broadcastLobby() { net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, shown: net.aliasCode || net.code }); renderLobby(); }
+function setLobbyTeam(id, team) {
+  if (!net.isHost || game.state !== 'lobby' || !validTeam(team)) return false;
+  const p = lobby.players.get(id); if (!p) return false;
+  p.team = team; if (id === net.id) player.team = team; else addRemote(id, p.name, team);
+  lobby.status = ''; broadcastLobby(); return true;
+}
+function chooseTeam(team) {
+  if (game.state !== 'lobby' || !validTeam(team)) return;
+  if (net.isHost) setLobbyTeam(net.id, team);
+  else { lobby.status = 'switching to ' + teamName(team).toLowerCase() + '…'; net.send('teamreq', { team }); renderLobby(); }
+}
 const inMatch = () => ['play', 'dying', 'over'].includes(game.state);
-net.onPeerLeave = (id) => { const nm = (lobby.players.get(id) || {}).name; removeRemote(id); broadcastLobby(); if (inMatch()) { hud.kill((nm || '某人') + ' 离开了', 0); sendScores(); } };
-net.onDisconnect = () => { if (lobby.order && lobby.order.some((id) => id !== lobby.hostId)) migrateHost(); else leaveOnline('房主离开了大厅'); };
+net.onPeerLeave = (id) => { const nm = (lobby.players.get(id) || {}).name; removeRemote(id); ensureLobbyTeams(); broadcastLobby(); if (inMatch()) { hud.kill((nm || 'someone') + ' left', 0); sendScores(); } };
+net.onDisconnect = () => { if (lobby.order && lobby.order.some((id) => id !== lobby.hostId)) migrateHost(); else leaveOnline('the host left the lobby'); };
 // ---- host transfer: when the host goes, the earliest-joined player left takes over on a generation
 // code (the old code is slow to free up on the signalling server); everyone else rejoins there
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -446,25 +486,25 @@ async function migrateHost() { if (migrating) return; migrating = true; try { aw
 async function _migrateHost() {
   const oldHost = lobby.hostId, myId = net.id; const gen = (lobby.gen || 0) + 1; lobby.gen = gen;
   const base = (lobby.code || net.code || '').replace(/-\d+$/, ''); const code = base + '-' + gen;
-  const roster = (lobby.order || []).filter((id) => id !== oldHost && lobby.players.has(id)); if (!roster.length || !base) { leaveOnline('房主离开了大厅'); return; }
+  const roster = (lobby.order || []).filter((id) => id !== oldHost && lobby.players.has(id)); if (!roster.length || !base) { leaveOnline('the host left the lobby'); return; }
   const successor = roster[0]; const wasInMatch = inMatch();
   if (oldHost) { const r = remote.get(oldHost); if (r) r.dispose(); remote.delete(oldHost); lobby.players.delete(oldHost); scores.delete(oldHost); }
-  hud.message('房主离开了', successor === myId ? '现在由你担任房主' : '正在迁往新房主…', 2.6);
+  hud.message('HOST LEFT', successor === myId ? 'you are hosting now' : 'moving to the new host…', 2.6);
   if (successor === myId) {
     let ok = false;
     for (let tries = 0; tries < 2 && !ok; tries++) { try { await net.host({ isPublic: lobby.isPublic, code }); ok = true; } catch (e) { await sleep(800); } }
-    if (!ok) { leaveOnline('无法接管大厅'); return; }
-    const mine = lobby.players.get(myId) || { name: myName }; lobby.players.delete(myId); lobby.players.set(net.id, mine);
+    if (!ok) { leaveOnline('could not take over the lobby'); return; }
+    const mine = lobby.players.get(myId) || { name: myName, team: validTeam(player.team) ? player.team : pickBalancedTeam() }; player.team = mine.team; lobby.players.delete(myId); lobby.players.set(net.id, mine);
     const ms = scores.get(myId); scores.delete(myId); if (ms) scores.set(net.id, ms);
-    lobby.hostId = net.id; lobby.code = code; lobby.order = [net.id, ...roster.filter((id) => id !== myId)]; net.accepting = true; game.clockStarted = clockRunning || matchLeft < FFA_TIME;
-    net.onAlias = () => { broadcastLobby(); hud.kill('大厅代码 ' + base + ' 已恢复', 0); }; net.claimAlias(base);
+    lobby.hostId = net.id; lobby.code = code; lobby.order = [net.id, ...roster.filter((id) => id !== myId)]; net.accepting = true; game.clockStarted = clockRunning || matchLeft < MATCH_TIME;
+    net.onAlias = () => { broadcastLobby(); hud.kill('lobby code ' + base + ' is back', 0); }; net.claimAlias(base);
     if (game.state === 'over') { /* the results stay up; the host timer now runs here */ } else if (wasInMatch) { if (game.state !== 'play' && game.state !== 'dying') game.state = 'play'; refreshScoreHud(); } else { game.state = 'lobby'; screen = 'lobby'; showStart(); }
     broadcastLobby();
   } else {
     await sleep(1200);
     const deadline = performance.now() + 20000; let joined = false;
-    while (!joined && performance.now() < deadline) { try { await net.join(code, { name: myName, prev: myId }); joined = true; } catch (e) { await sleep(1200); } }
-    if (!joined) { leaveOnline('房主离开，对局已丢失'); return; }
+    while (!joined && performance.now() < deadline) { try { await net.join(code, { name: myName, prev: myId, team: player.team }); joined = true; } catch (e) { await sleep(1200); } }
+    if (!joined) { leaveOnline('lost the match when the host left'); return; }
     lobby.code = code; if (!wasInMatch) { game.state = 'lobby'; screen = 'lobby'; showStart(); }
   }
 }
@@ -472,21 +512,28 @@ net.on('refused', (d) => leaveOnline(d.reason));
 net.hostName = myName;
 net.onPeerJoin = (from, meta) => {
   const name = String(meta && meta.name || 'doodle').slice(0, 14);
-  if (meta && meta.prev && meta.prev !== from) { const sc = scores.get(meta.prev); if (sc) { scores.delete(meta.prev); scores.set(from, sc); } const r = remote.get(meta.prev); if (r) r.dispose(); remote.delete(meta.prev); lobby.players.delete(meta.prev); if (lobby.order) lobby.order = lobby.order.filter((id) => id !== meta.prev); }
-  lobby.players.set(from, { name }); addRemote(from, name); broadcastLobby();
-  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(), map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + ' 加入了', 0); }
+  let preservedTeam = null;
+  if (meta && meta.prev && meta.prev !== from) {
+    const old = lobby.players.get(meta.prev); if (old && validTeam(old.team)) preservedTeam = old.team;
+    const sc = scores.get(meta.prev); if (sc) { scores.delete(meta.prev); scores.set(from, sc); }
+    const r = remote.get(meta.prev); if (r) r.dispose(); remote.delete(meta.prev); lobby.players.delete(meta.prev); if (lobby.order) lobby.order = lobby.order.filter((id) => id !== meta.prev);
+  }
+  const team = validTeam(preservedTeam) ? preservedTeam : (meta && meta.prev && validTeam(meta.team) ? meta.team : pickBalancedTeam());
+  lobby.players.set(from, { name, team }); addRemote(from, name, team); ensureLobbyTeams(); broadcastLobby();
+  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + ' joined ' + teamName(team), 0); }
 };
 net.on('lobby', (d) => {
   lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; if (d.map) lobby.map = knownMap(d.map); lobby.order = d.players.map((p) => p.id); lobby.players.clear();
-  for (const p of d.players) lobby.players.set(p.id, { name: p.name });
-  for (const p of d.players) if (p.id !== net.id) addRemote(p.id, p.name);
+  for (const p of d.players) lobby.players.set(p.id, { name: p.name, team: validTeam(p.team) ? p.team : TEAM_RED });
+  const mine = lobby.players.get(net.id); if (mine) { player.team = mine.team; lobby.status = ''; }
+  for (const p of d.players) if (p.id !== net.id) addRemote(p.id, p.name, lobby.players.get(p.id).team);
   for (const id of [...remote.keys()]) if (!lobby.players.has(id)) removeRemote(id);
-  if (inMatch()) { for (const p of d.players) if (!scores.has(p.id)) scores.set(p.id, { name: p.name, kills: 0, deaths: 0 }); refreshScoreHud(); }
+  if (inMatch()) { for (const p of d.players) if (!scores.has(p.id)) scores.set(p.id, { name: p.name, team: lobby.players.get(p.id).team, kills: 0, deaths: 0 }); refreshScoreHud(); }
   renderLobby();
 });
-net.on('leave', (d) => { const nm = (lobby.players.get(d.id) || {}).name; removeRemote(d.id); if (inMatch()) hud.kill((nm || '某人') + ' 离开了', 0); renderLobby(); });
-net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
-net.on('startreq', () => { if (net.isHost && game.state === 'lobby') hostStart(); });
+net.on('teamreq', (d, from) => { if (net.isHost) setLobbyTeam(from, Number(d && d.team)); });
+net.on('leave', (d) => { const nm = (lobby.players.get(d.id) || {}).name; removeRemote(d.id); if (inMatch()) hud.kill((nm || 'someone') + ' left', 0); renderLobby(); });
+net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); const assigned = d.teams && d.teams[net.id]; if (validTeam(d.team)) player.team = d.team; else if (validTeam(assigned)) player.team = assigned; startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
 net.on('end', (d) => endMatch(d));
 net.on('backtolobby', () => { if (!net.isHost) toLobbyScreen(); });
 net.on('pickup', (d) => { if (!net.isHost) spawnPickup(d.kind, new THREE.Vector3().fromArray(d.pos), d.id); });
@@ -494,35 +541,35 @@ net.on('taken', (d) => { const p = pickups.find((x) => x.id === d.id); if (p) re
 net.on('take', (d) => { if (!net.isHost) return; const p = pickups.find((x) => x.id === d.id); if (p) { removePickup(p); net.send('taken', { id: d.id }); } });
 net.on('ps', (d, from) => { const r = remote.get(from); if (r) { r.push(d, performance.now() / 1000); r.lastSeen = performance.now(); } });
 net.on('pdmg', (d) => {
-  if (!player.alive || game.state !== 'play' || player.shieldT > 0) return; player.lastHitBy = d.by || null; player.lastHit = { from: d.from || null, crit: !!d.crit, amount: d.amount, src: d.src };
+  if (!player.alive || game.state !== 'play' || player.shieldT > 0 || (d.by && teamOf(d.by) === player.team)) return; player.lastHitBy = d.by || null; player.lastHit = { from: d.from || null, crit: !!d.crit, amount: d.amount, src: d.src };
   player.takeDamage(d.amount, d.from ? new THREE.Vector3().fromArray(d.from) : null);
 });
 net.on('pdead', (d, from) => {
-  const r = remote.get(from); const vn = r ? r.name : '某人'; const kn = d.killer && scores.get(d.killer) ? scores.get(d.killer).name : null;
+  const r = remote.get(from); const vn = r ? r.name : 'someone'; const kn = d.killer && scores.get(d.killer) ? scores.get(d.killer).name : null;
   if (r) { r.ragdoll(d.dir ? new THREE.Vector3().fromArray(d.dir) : null, !!d.over); audio.enemyDie(r.center); }
-  const how = d.how ? ' · ' + d.how + (d.crit ? ' 爆头' : '') : '';
-  if (d.killer === net.id) { game.kills++; game.addScore(100, '抹除 ' + vn + how); audio.kill(true); }
-  else hud.kill(kn ? kn + ' 抹除了 ' + vn + how : vn + ' 坠出纸面', 0);
+  const how = d.how ? ' · ' + d.how + (d.crit ? ' headshot' : '') : '';
+  if (d.killer === net.id && (!r || r.team !== player.team)) { game.kills++; game.addScore(100, 'ERASED ' + vn + how); audio.kill(true); }
+  else hud.kill(kn ? kn + ' erased ' + vn + how : vn + ' fell off the page', 0);
   if (net.isHost) tallyDeath(from, d.killer);
 });
-net.on('nade', (d) => player.throwGrenade(d));
+net.on('nade', (d, from) => player.throwGrenade({ ...d, team: teamOf(from) }));
 net.on('brk', (d) => { const br = level.breakables[d.id]; if (br) breakProp(br, null, false); });
-net.on('parry', (d) => { audio.shieldHit(player.center); input.rumble(0.35, 0.3, 60); effects.strokeBurst(player.eye.clone().addScaledVector(player.forward, 0.5), INK.ORANGE, 8, 5, { life: 0.2, size: 0.03 }); hud.kill(d.ret ? '原路奉还' : '被弹开', d.ret ? 25 : 0); });
+net.on('parry', (d) => { audio.shieldHit(player.center); input.rumble(0.35, 0.3, 60); effects.strokeBurst(player.eye.clone().addScaledVector(player.forward, 0.5), INK.ORANGE, 8, 5, { life: 0.2, size: 0.03 }); hud.kill(d.ret ? 'RETURN TO SENDER' : 'DEFLECTED', d.ret ? 25 : 0); });
 net.on('shots', (d, from) => {
   const r = remote.get(from); if (!r || !r.root || !r.alive) return;
   _sm.set(r.body.pos.x + r.right.x * 0.3 + r.forward.x * 0.8, r.body.pos.y + 1.35 + r.forward.y * 0.8, r.body.pos.z + r.right.z * 0.3 + r.forward.z * 0.8);
   const th = TRACER_THICK[d.k] || 0.02; const e = d.e || [];
-  for (let i = 0; i + 2 < e.length; i += 3) { _se.set(e[i], e[i + 1], e[i + 2]); effects.tracer(_sm, _se, INK.BLUE, th, 0.06); }
+  for (let i = 0; i + 2 < e.length; i += 3) { _se.set(e[i], e[i + 1], e[i + 2]); effects.tracer(_sm, _se, r.ink, th, 0.06); }
   r.flash(); audio.remoteShot(d.k, _sm);
 });
-net.on('cut', () => { if (player.grapple.state !== 'idle') { player.detachGrapple(false); effects.strokeBurst(player.center, INK.ORANGE, 8, 4, { life: 0.25, size: 0.03 }); hud.tip('你的绳索被割断了', 1.3); input.rumble(0.5, 0.3, 80); } });
+net.on('cut', () => { if (player.grapple.state !== 'idle') { player.detachGrapple(false); effects.strokeBurst(player.center, INK.ORANGE, 8, 4, { life: 0.25, size: 0.03 }); hud.tip('your rope got cut', 1.3); input.rumble(0.5, 0.3, 80); } });
 net.on('score', (rows) => { if (!net.isHost) applyScores(rows); });
-net.on('fell', (d, from) => { if (!net.isHost) return; const sc = scores.get(from); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' 坠出纸面 · -1' }); hud.kill(sc.name + ' 坠出纸面 · -1', 0); } });
+net.on('fell', (d, from) => { if (!net.isHost) return; const sc = scores.get(from); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' fell off the page · -1 team point' }); hud.kill(sc.name + ' fell off the page · -1 team point', 0); } });
 net.on('feed', (d) => hud.kill(String(d.text || ''), 0));
 player.onFall = () => {
   if (!online() || !inMatch()) return;
-  hud.kill('坠出纸面 · 击杀 -1', 0);
-  if (net.isHost) { const sc = scores.get(net.id); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' 坠出纸面 · -1' }); } }
+  hud.kill('fell off the page · -1 team point', 0);
+  if (net.isHost) { const sc = scores.get(net.id); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' fell off the page · -1 team point' }); } }
   else net.send('fell', {});
 };
 net.on('clock', (d) => { if (!net.isHost) { matchLeft = d.left; clockRunning = !!d.on; } });
@@ -537,26 +584,26 @@ function idleUpdate(dt) {
   const othersActive = [...remote.values()].some((r) => !r.idle);
   // a host that still has active players stays; kicking it would end their match
   const canDrop = !net.isHost || !othersActive;
-  if (idle > limit - IDLE_WARN && !idleWarned && canDrop) { idleWarned = true; hud.message('还在吗？', '动一动吧，否则会因挂机被移出', 3); audio.empty(); }
+  if (idle > limit - IDLE_WARN && !idleWarned && canDrop) { idleWarned = true; hud.message('STILL THERE?', 'move or you get kicked for inactivity', 3); audio.empty(); }
   if (idle <= limit - IDLE_WARN) idleWarned = false;
-  if (idle > limit && canDrop) { const back = net.isHost ? null : String(net.aliasCode || net.code || '').replace(/-\d+$/, ''); leaveOnline(net.isHost ? '大厅已关闭：全员挂机' : '因挂机被移出'); lobby.rejoinCode = back; if (back) showStart(); return; }
+  if (idle > limit && canDrop) { const back = net.isHost ? null : String(net.aliasCode || net.code || '').replace(/-\d+$/, ''); leaveOnline(net.isHost ? 'lobby closed: everyone was idle' : 'kicked for inactivity'); lobby.rejoinCode = back; if (back) showStart(); return; }
   // the host also clears out a client that has sat idle past the limit, in case its tab cannot do it itself
-  if (net.isHost) for (const [id, r] of remote) if (r.idle && r.idleSince && performance.now() / 1000 - r.idleSince > limit - IDLE_FLAG + 15) { net.sendTo(id, 'kick', { reason: '因挂机被移出' }); const c = net.conns.get(id); setTimeout(() => { try { c && c.close(); } catch (e) { /* ignore */ } }, 500); }
+  if (net.isHost) for (const [id, r] of remote) if (r.idle && r.idleSince && performance.now() / 1000 - r.idleSince > limit - IDLE_FLAG + 15) { net.sendTo(id, 'kick', { reason: 'kicked for inactivity' }); const c = net.conns.get(id); setTimeout(() => { try { c && c.close(); } catch (e) { /* ignore */ } }, 500); }
 }
-net.on('kick', (d) => { const back = String(net.aliasCode || net.code || '').replace(/-\d+$/, ''); leaveOnline(d && d.reason || '被移出'); lobby.rejoinCode = back; if (back) showStart(); });
+net.on('kick', (d) => { const back = String(net.aliasCode || net.code || '').replace(/-\d+$/, ''); leaveOnline(d && d.reason || 'kicked'); lobby.rejoinCode = back; if (back) showStart(); });
 let syncTick = 0;
 function netUpdate(dt) {
   idleUpdate(dt);
   if (!net.active) return; const now = performance.now() / 1000; syncTick++;
   for (const r of remote.values()) r.update(dt, now);
   // a connection that died without saying so leaves a figure standing around: drop anyone silent too long
-  if (inMatch() && !migrating) for (const [id, r] of remote) { if (r.lastSeen && performance.now() - r.lastSeen > 9000) { if (!net.isHost && id === net.hostId) { net.leave(); migrateHost(); break; } const nm = r.name; removeRemote(id); hud.kill(nm + ' 连接中断', 0); if (net.isHost) { const c = net.conns.get(id); if (c) { try { c.close(); } catch (e) { /* ignore */ } net.conns.delete(id); } net.send('leave', { id }); broadcastLobby(); sendScores(); } } }
+  if (inMatch() && !migrating) for (const [id, r] of remote) { if (r.lastSeen && performance.now() - r.lastSeen > 9000) { if (!net.isHost && id === net.hostId) { net.leave(); migrateHost(); break; } const nm = r.name; removeRemote(id); hud.kill(nm + ' lost connection', 0); if (net.isHost) { const c = net.conns.get(id); if (c) { try { c.close(); } catch (e) { /* ignore */ } net.conns.delete(id); } net.send('leave', { id }); broadcastLobby(); sendScores(); } } }
   if (syncTick % 3 === 0 && inMatch()) net.send('ps', encodeLocal(player, player.weaponIndex, { firing: player.firing, idle: input.idleSeconds > IDLE_FLAG }), true);
   if (shotQueue.length) net.broadcast('shots', { k: player.weapon.kind, e: shotQueue.splice(0) });
   if (net.isHost && inMatch() && remote.size > 0) game.clockStarted = true;
   const clockOn = inMatch() && !game.over && (net.isHost ? !!game.clockStarted : clockRunning);
-  if (inMatch() && !game.over) { if (clockOn) matchLeft = Math.max(0, matchLeft - dt); if (net.isHost) { clockT -= dt; if (clockT <= 0) { clockT = 2; net.send('clock', { left: Math.round(matchLeft), on: clockOn }); } } hud.setTimer(clockOn ? mmss(matchLeft) : '有玩家加入后开始计时'); }
-  if (net.isHost && clockOn) { game.matchT += dt; if (matchLeft <= 0) { const rows = sortedScores(); const w = rows.length ? { id: rows[0][0], name: rows[0][1].name } : { id: net.id, name: myName }; net.send('end', w); endMatch(w); } }
+  if (inMatch() && !game.over) { if (clockOn) matchLeft = Math.max(0, matchLeft - dt); if (net.isHost) { clockT -= dt; if (clockT <= 0) { clockT = 2; net.send('clock', { left: Math.round(matchLeft), on: clockOn }); } } hud.setTimer(clockOn ? mmss(matchLeft) : 'clock starts when someone joins'); }
+  if (net.isHost && clockOn) { game.matchT += dt; if (matchLeft <= 0) { const totals = teamTotals(); const w = totals[TEAM_RED] === totals[TEAM_YELLOW] ? { draw: true } : { team: totals[TEAM_YELLOW] > totals[TEAM_RED] ? TEAM_YELLOW : TEAM_RED }; net.send('end', w); endMatch(w); } }
 }
 function leaveOnline(reason) {
   net.leave(); for (const id of [...remote.keys()]) removeRemote(id); lobby.players.clear(); scores.clear(); hud.setBoard(null);
@@ -564,31 +611,31 @@ function leaveOnline(reason) {
   game.menu = false; lobby.status = reason || ''; screen = 'online'; showStart();
 }
 async function createLobby(isPublic) {
-  setStatus('正在创建大厅…');
+  setStatus('opening a lobby…');
   try { await net.host({ isPublic }); }
   catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
-  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.players.clear(); lobby.players.set(net.id, { name: myName }); lobby.hostId = net.id; lobby.status = '';
+  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_YELLOW; lobby.players.set(net.id, { name: myName, team: player.team }); lobby.hostId = net.id; lobby.status = '';
   game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function joinLobby(code) {
-  setStatus('正在连接…');
+  setStatus('connecting…');
   try { await net.join(code, { name: myName }); } catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
   lobby.isPublic = net.isPublic; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function quickPlay() {
   try { await net.quickJoin({ name: myName }, setStatus); lobby.isPublic = true; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart(); return; }
   catch (err) { if (!/no open public/.test(String(err.message))) { setStatus(friendlyError(err)); unlockButtons(); return; } }
-  setStatus('暂无开放的大厅 · 正在为你开一个公开大厅…');
+  setStatus('no open lobbies · opening a public one for you…');
   await createLobby(true);
 }
 function friendlyError(err) {
-  const m = String(err && err.message || err || ''); if (!m) return '出了点问题';
-  if (/networking library/.test(m)) return '无法加载联机库 · 请检查网络并刷新页面';
-  if (/timed out|signalling/.test(m)) return '无法连接匹配服务器 · 请检查你的网络';
-  if (/no lobby with that code/.test(m)) return '找不到该代码对应的大厅 · 和朋友核对一下代码';
-  if (/no answer/.test(m)) return '找到了大厅但无法连接 · 你们中可能有人处于阻止直连的网络';
-  if (/full/.test(m)) return '该大厅已满 · 试试其他代码';
-  if (/leave the lobby/.test(m)) return '请先离开你当前的大厅';
+  const m = String(err && err.message || err || ''); if (!m) return 'something went wrong';
+  if (/networking library/.test(m)) return 'could not load the networking library · check your connection and reload';
+  if (/timed out|signalling/.test(m)) return 'could not reach the matchmaking server · check your connection';
+  if (/no lobby with that code/.test(m)) return 'no lobby with that code · check it with your friend';
+  if (/no answer/.test(m)) return 'found the lobby but could not connect · one of you may be on a network that blocks it';
+  if (/full/.test(m)) return 'that lobby is full · try another code';
+  if (/leave the lobby/.test(m)) return 'leave your lobby first';
   return m;
 }
 function setStatus(t) { lobby.status = t; const el = hud.el.panel.querySelector('#status'); if (el) el.textContent = t; }
@@ -596,9 +643,9 @@ function setStatus(t) { lobby.status = t; const el = hud.el.panel.querySelector(
 // ---------------- screens ----------------
 function settingsHTML() {
   return `<div class="settings" id="settings">
-    <label>鼠标灵敏度 <input type="range" id="setSens" min="25" max="250" step="5" value="${settings.sens}"><b id="setSensV">${settings.sens}%</b></label>
-    <label><input type="checkbox" id="setInv" ${settings.invert ? 'checked' : ''}> 反转垂直视角</label>
-    <label><input type="checkbox" id="setMus" ${musicWanted ? 'checked' : ''}> 音乐 <span class="k">(M)</span></label>
+    <label>look sensitivity <input type="range" id="setSens" min="25" max="250" step="5" value="${settings.sens}"><b id="setSensV">${settings.sens}%</b></label>
+    <label><input type="checkbox" id="setInv" ${settings.invert ? 'checked' : ''}> invert vertical look</label>
+    <label><input type="checkbox" id="setMus" ${musicWanted ? 'checked' : ''}> music <span class="k">(M)</span></label>
   </div>`;
 }
 function wireSettings() {
@@ -615,58 +662,61 @@ function wireName(box) {
 }
 function checkpointHTML() {
   if (checkpoint < 5) return '';
-  let h = '<div class="checkpoints"><span>检查点</span>';
-  for (let w = 5; w <= checkpoint; w += 5) h += `<button type="button" data-cp="${w}">第 ${w} 波</button>`;
+  let h = '<div class="checkpoints"><span>checkpoints</span>';
+  for (let w = 5; w <= checkpoint; w += 5) h += `<button type="button" data-cp="${w}">WAVE ${w}</button>`;
   return h + '</div>';
 }
 function wireCheckpoints(onGo) { const box = hud.el.panel.querySelector('.checkpoints'); if (!box) return; box.addEventListener('click', (e) => { e.stopPropagation(); const b = e.target.closest('button'); if (b) onGo(Number(b.dataset.cp)); }); }
 const mapName = (k) => (LEVELS.find((m) => m.key === k) || LEVELS[0]).name;
-function mapHTML(sel, canPick) { if (LEVELS.length < 2) return ''; return `<div class="mapsel" id="mapsel"><span>地图</span>${LEVELS.map((m) => `<button type="button" class="mapbtn${m.key === sel ? ' on' : ''}" data-map="${m.key}" ${canPick ? '' : 'disabled'}>${m.name}<i>${m.blurb}</i></button>`).join('')}</div>`; }
+function mapHTML(sel, canPick) { if (LEVELS.length < 2) return ''; return `<div class="mapsel" id="mapsel"><span>map</span>${LEVELS.map((m) => `<button type="button" class="mapbtn${m.key === sel ? ' on' : ''}" data-map="${m.key}" ${canPick ? '' : 'disabled'}>${m.name}<i>${m.blurb}</i></button>`).join('')}</div>`; }
 function wireMap(onPick) { const box = hud.el.panel.querySelector('#mapsel'); if (!box) return; box.addEventListener('click', (e) => { e.stopPropagation(); const b = e.target.closest('.mapbtn'); if (b && !b.disabled) onPick(b.dataset.map); }); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function mainHTML() {
-  return `<h1>涂鸦街区</h1><h2>一款涂鸦风生存射击游戏</h2>
-    <div class="mainbtns"><button type="button" class="start" id="soloBtn">开始游戏<i>单人 · 抵御一波波敌人</i></button><button type="button" id="onlineBtn">在线对战<i>自由混战 · 最多 10 名玩家</i></button></div>
-    ${mapHTML(mapKey, true)}${CONTROLS_HTML}${settingsHTML()}${checkpointHTML()}${best ? `<div class="beststat">最高分：${best}</div>` : ''}`;
+  return `<h1>DOODLE DISTRICT</h1><h2>a scribbled survival shooter</h2>
+    <div class="mainbtns"><button type="button" class="start" id="soloBtn">START<i>solo · survive the waves</i></button><button type="button" id="onlineBtn">PLAY ONLINE<i>choose red or yellow · up to 10 players</i></button></div>
+    ${mapHTML(mapKey, true)}${CONTROLS_HTML}${settingsHTML()}${checkpointHTML()}${best ? `<div class="beststat">best score: ${best}</div>` : ''}`;
 }
 function onlineHTML() {
-  return `<h1>在线对战</h1><h2>自由混战 · 先到 ${FFA_TARGET} 杀 · 最多 10 名玩家</h2>
+  return `<h1>PLAY ONLINE</h1><h2>choose red or yellow · first team to ${TEAM_TARGET} · up to 10 players</h2>
     <div class="online" id="online">
-      <div class="row"><span>你的昵称</span><input type="text" class="namebox" id="setName" maxlength="14" value="${esc(myName)}"></div>
-      <div class="row"><button type="button" class="big" id="quickBtn">快速匹配</button><span class="hint">自动加入开放的公开大厅；没有的话就为你开一个</span></div>
-      <div class="row split"><span>或</span></div>
-      <div class="row"><button type="button" id="createBtn">创建大厅</button><div class="radio"><label><input type="radio" name="vis" value="public" ${lobby.isPublic ? 'checked' : ''}> 公开</label><label><input type="radio" name="vis" value="private" ${lobby.isPublic ? '' : 'checked'}> 私密 · 仅好友</label></div></div>
-      <div class="row"><span>有大厅代码？</span><input type="text" id="codeBox" placeholder="代码" maxlength="5" autocomplete="off"><button type="button" id="joinBtn">加入</button></div>
-      <div class="lobbylist" id="lobbylist"><div class="row"><span>公开大厅</span><button type="button" class="alt" id="refreshBtn">刷新</button></div><div class="rows" id="lobbyRows">${lobbyListHTML()}</div></div>
+      <div class="row"><span>your name</span><input type="text" class="namebox" id="setName" maxlength="14" value="${esc(myName)}"></div>
+      <div class="row"><button type="button" class="big" id="quickBtn">QUICK PLAY</button><span class="hint">jumps into an open public lobby, or opens one for you</span></div>
+      <div class="row split"><span>or</span></div>
+      <div class="row"><button type="button" id="createBtn">CREATE LOBBY</button><div class="radio"><label><input type="radio" name="vis" value="public" ${lobby.isPublic ? 'checked' : ''}> public</label><label><input type="radio" name="vis" value="private" ${lobby.isPublic ? '' : 'checked'}> private · friends only</label></div></div>
+      <div class="row"><span>have a code?</span><input type="text" id="codeBox" placeholder="CODE" maxlength="5" autocomplete="off"><button type="button" id="joinBtn">JOIN</button></div>
+      <div class="lobbylist" id="lobbylist"><div class="row"><span>public lobbies</span><button type="button" class="alt" id="refreshBtn">REFRESH</button></div><div class="rows" id="lobbyRows">${lobbyListHTML()}</div></div>
       <div class="status" id="status">${esc(lobby.status || '')}</div>
-      ${lobby.rejoinCode ? `<div class="row"><button type="button" class="big" id="rejoinBtn">重新加入 ${esc(lobby.rejoinCode)}</button></div>` : ''}
-      <div class="row"><button type="button" class="alt" id="backBtn">返回</button></div>
+      ${lobby.rejoinCode ? `<div class="row"><button type="button" class="big" id="rejoinBtn">REJOIN ${esc(lobby.rejoinCode)}</button></div>` : ''}
+      <div class="row"><button type="button" class="alt" id="backBtn">BACK</button></div>
     </div>`;
 }
 function lobbyHTML() {
   const rows = lobbyRows(); const host = net.isHost; const n = rows.length;
-  return `<h1>大厅</h1><h2>自由混战 · 先到 ${FFA_TARGET} 杀 · ${n}/${net.maxPlayers} 名玩家</h2>
+  const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team;
+  return `<h1>LOBBY</h1><h2>choose your team · first team to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
     <div class="online" id="online">
-      <div class="row"><span>代码</span><span class="code">${String(net.isHost ? (net.aliasCode || net.code) : (lobby.shown || net.code) || '').replace(/-\d+$/, '')}</span></div>
+      <div class="row"><span>code</span><span class="code">${String(net.isHost ? (net.aliasCode || net.code) : (lobby.shown || net.code) || '').replace(/-\d+$/, '')}</span></div>
       ${mapHTML(lobby.map || mapKey, host)}
-      <div class="hint">${lobby.isPublic ? '该大厅为公开：任何人都可通过快速匹配或输入代码加入' : '私密大厅：好友在「在线对战 → 加入」中输入此代码'}</div>
-      <div class="plist">${rows.map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? '你' : ''}</span></div>`).join('')}</div>
-      <div class="row"><button type="button" class="big" id="startBtn">开始对战</button><button type="button" class="alt" id="leaveBtn">离开</button></div>
-      <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">任何人都可以开始 · ${n < 2 ? '开局后仍可中途加入' : n + ' 名玩家已就位'}</div>
+      <div class="hint">${lobby.isPublic ? 'this lobby is public: anyone can quick play in, or type the code' : 'private lobby: friends type this code under PLAY ONLINE → JOIN'}</div>
+      <div class="teamchoice" role="group" aria-label="Choose your team"><span>your team</span><button type="button" class="redteam${myTeam === TEAM_RED ? ' on' : ''}" data-team="${TEAM_RED}" aria-pressed="${myTeam === TEAM_RED}">RED TEAM</button><button type="button" class="yellowteam${myTeam === TEAM_YELLOW ? ' on' : ''}" data-team="${TEAM_YELLOW}" aria-pressed="${myTeam === TEAM_YELLOW}">YELLOW TEAM</button></div>
+      <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="yellowteam"><h3>YELLOW TEAM</h3><div class="plist">${teamList(TEAM_YELLOW)}</div></section></div>
+      <div class="row">${host ? '<button type="button" class="big" id="startBtn">START MATCH</button>' : '<span class="hint">waiting for the host to start the match…</span>'}<button type="button" class="alt" id="leaveBtn">LEAVE</button></div>
+      <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">choose or switch teams before the match starts · new players receive a balanced default</div>
     </div>`;
 }
 let lobbyList = null, listBusy = false;
 function lobbyListHTML() {
-  if (listBusy) return '<div class="hint">正在查找…</div>';
-  if (!lobbyList) return '<div class="hint">点击「刷新」查找开放的大厅</div>';
-  if (!lobbyList.length) return '<div class="hint">点击「快速匹配」即可加入大厅</div>';
-  return lobbyList.map((l) => `<div class="lobbyrow"><span class="code">${esc(l.code)}</span><span>${esc(l.hostName || '某人')} 的大厅</span><span>${l.players}/${l.max}${l.inMatch ? ' · 对战中' : ''}</span>${l.full ? '<span class="status">已满</span>' : `<button type="button" data-join="${esc(l.code)}">加入</button>`}</div>`).join('');
+  if (listBusy) return '<div class="hint">looking…</div>';
+  if (!lobbyList) return '<div class="hint">press refresh to look for open lobbies</div>';
+  if (!lobbyList.length) return '<div class="hint">hit QUICK PLAY to join a lobby</div>';
+  return lobbyList.map((l) => `<div class="lobbyrow"><span class="code">${esc(l.code)}</span><span>${esc(l.hostName || 'someone')}'s lobby</span><span>${l.players}/${l.max}${l.inMatch ? ' · in a match' : ''}</span>${l.full ? '<span class="status">full</span>' : `<button type="button" data-join="${esc(l.code)}">JOIN</button>`}</div>`).join('');
 }
 async function refreshLobbies() {
   if (listBusy || net.active) return; listBusy = true; const box = hud.el.panel.querySelector('#lobbyRows'); if (box) box.innerHTML = lobbyListHTML();
   let err = null; try { lobbyList = await net.listLobbies({ name: myName }); } catch (e) { lobbyList = []; err = e; }
-  listBusy = false; const rows = hud.el.panel.querySelector('#lobbyRows'); if (rows) rows.innerHTML = err ? `<div class="hint">查找失败：${esc(friendlyError(err))}</div>` : lobbyListHTML();
+  listBusy = false; const rows = hud.el.panel.querySelector('#lobbyRows'); if (rows) rows.innerHTML = err ? `<div class="hint">could not look: ${esc(friendlyError(err))}</div>` : lobbyListHTML();
 }
 function wireOnline() {
   const box = hud.el.panel.querySelector('#online'); if (!box) return;
@@ -674,13 +724,14 @@ function wireOnline() {
   const q = (id) => box.querySelector('#' + id); wireName(box);
   if (q('quickBtn')) q('quickBtn').addEventListener('click', () => { lockButtons(box); quickPlay(); });
   if (q('createBtn')) q('createBtn').addEventListener('click', () => { lockButtons(box); createLobby(box.querySelector('input[name=vis]:checked').value === 'public'); });
-  if (q('joinBtn')) { q('joinBtn').addEventListener('click', () => { const c = q('codeBox').value.trim().toUpperCase(); if (!c) { setStatus('请输入好友给你的大厅代码'); return; } lockButtons(box); joinLobby(c); }); q('codeBox').addEventListener('keydown', (e) => { if (e.key === 'Enter') q('joinBtn').click(); }); }
+  if (q('joinBtn')) { q('joinBtn').addEventListener('click', () => { const c = q('codeBox').value.trim().toUpperCase(); if (!c) { setStatus('type the code your friend gave you'); return; } lockButtons(box); joinLobby(c); }); q('codeBox').addEventListener('keydown', (e) => { if (e.key === 'Enter') q('joinBtn').click(); }); }
   if (q('rejoinBtn')) q('rejoinBtn').addEventListener('click', () => { const c = lobby.rejoinCode; lobby.rejoinCode = null; lockButtons(box); joinLobby(c); });
   if (q('backBtn')) q('backBtn').addEventListener('click', () => { lobby.status = ''; lobby.rejoinCode = null; screen = 'main'; showStart(); });
   if (q('refreshBtn')) { q('refreshBtn').addEventListener('click', () => refreshLobbies()); if (!lobbyList && !listBusy) refreshLobbies(); }
   if (q('lobbyRows')) q('lobbyRows').addEventListener('click', (e) => { const b = e.target.closest('button[data-join]'); if (b) { lockButtons(box); joinLobby(b.dataset.join); } });
+  const teamChoice = box.querySelector('.teamchoice'); if (teamChoice) teamChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-team]'); if (b) chooseTeam(Number(b.dataset.team)); });
   wireMap((k) => { if (net.isHost) { lobby.map = k; broadcastLobby(); } });
-  if (q('startBtn')) q('startBtn').addEventListener('click', () => { if (net.isHost) hostStart(); else { net.send('startreq', {}); setStatus('正在请求房主开始…'); } });
+  if (q('startBtn')) q('startBtn').addEventListener('click', () => hostStart());
   if (q('leaveBtn')) q('leaveBtn').addEventListener('click', () => { lobby.rejoinCode = null; leaveOnline(''); });
 }
 function lockButtons(box) { for (const b of box.querySelectorAll('button')) if (b.id !== 'backBtn') b.disabled = true; }
@@ -700,19 +751,19 @@ function showStart() {
 }
 function showPause() {
   if (online()) {
-    hud.showScreen(`<h1>菜单</h1><h2>自由混战 · 大厅 ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</h2><div class="scoreboard">${sortedScores().map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${esc(s.name)}</span><span>${s.kills} 杀 · ${s.deaths} 死</span></div>`).join('')}</div>${CONTROLS_HTML}${settingsHTML()}<div class="online" id="online"><div class="row"><button type="button" class="alt" id="leaveBtn">离开对战</button></div></div><div class="go">点击任意位置（或按 ${hud.key('confirm')}）继续游戏</div>`);
+    hud.showScreen(`<h1>MENU</h1><h2>team deathmatch · you are on <span class="${player.team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">${teamName(player.team)}</span> · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</h2><div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div>${CONTROLS_HTML}${settingsHTML()}<div class="online" id="online"><div class="row"><button type="button" class="alt" id="leaveBtn">LEAVE MATCH</button></div></div><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO KEEP PLAYING</div>`);
     wireSettings(); wireOnline(); return;
   }
-  hud.showScreen(`<h1>已暂停</h1><h2>第 ${game.wave} 波 · 得分 ${game.score}</h2>${CONTROLS_HTML}${settingsHTML()}${menuBtnHTML()}<div class="go">点击任意位置（或按 ${hud.key('confirm')}）继续</div>`);
+  hud.showScreen(`<h1>PAUSED</h1><h2>wave ${game.wave} · score ${game.score}</h2>${CONTROLS_HTML}${settingsHTML()}${menuBtnHTML()}<div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO RESUME</div>`);
   wireSettings(); wireMenuBtn();
 }
-function showClickToPlay() { hud.showScreen(`<h1>对战开始</h1><h2>自由混战 · 先到 ${FFA_TARGET} 杀</h2><div class="go">点击任意位置（或按 ${hud.key('confirm')}）开始作战</div>`); }
+function showClickToPlay() { hud.showScreen(`<h1>MATCH ON</h1><h2>team deathmatch · you are on <span class="${player.team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">${teamName(player.team)}</span></h2><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO PLAY</div>`); }
 function showDead() {
   hud.setGameplayVisible(false); const nb = game.score > best; if (nb) { best = game.score; localStorage.setItem('doodle_best', String(best)); }
-  hud.showScreen(`<h1>被抹除</h1><div class="stats">你撑过了 <b>${game.wave}</b> 波 · <b>${game.kills}</b> 次击杀 · 得分 <b>${game.score}</b>${nb ? ' · <b>新纪录</b>' : ` · 最高分 ${best}`}</div>${checkpointHTML()}${menuBtnHTML()}<div class="go">点击（或按 ${hud.key('confirm')}）再画一次</div>`);
+  hud.showScreen(`<h1>ERASED</h1><div class="stats">you survived <b>${game.wave}</b> wave${game.wave === 1 ? '' : 's'} · <b>${game.kills}</b> kills · score <b>${game.score}</b>${nb ? ' · <b>NEW BEST</b>' : ` · best ${best}`}</div>${checkpointHTML()}${menuBtnHTML()}<div class="go">CLICK (or press ${hud.key('confirm')}) TO DRAW AGAIN</div>`);
   wireCheckpoints((w) => beginAtWave(w)); wireMenuBtn();
 }
-function menuBtnHTML() { return '<div class="online menubtn"><div class="row"><button type="button" class="alt" id="menuBtn">主菜单</button></div></div>'; }
+function menuBtnHTML() { return '<div class="online menubtn"><div class="row"><button type="button" class="alt" id="menuBtn">MAIN MENU</button></div></div>'; }
 function wireMenuBtn() { const b = hud.el.panel.querySelector('#menuBtn'); if (b) b.addEventListener('click', (e) => { e.stopPropagation(); toMainMenu(); }); }
 function toMainMenu() { game.state = 'start'; game.mode = 'solo'; game.menu = false; setArena(false); resetGame(); audio.reelLoop(false); input.exitLock(); hud.setGameplayVisible(false); screen = 'main'; showStart(); }
 function toLobbyScreen() { net.inMatch = false; for (const r of remote.values()) r.lastSeen = performance.now(); setArena(true); resetGame(); game.state = 'lobby'; game.over = null; game.menu = false; hud.setGameplayVisible(false); hud.setBoard(null); screen = 'lobby'; showStart(); }
@@ -730,20 +781,24 @@ function begin() { game.mode = 'solo'; setArena(false); beginCommon(); if (game.
 function beginAtWave(n) { game.mode = 'solo'; setArena(false); beginCommon(); resetGame(); startWave(n); game.state = 'play'; }
 function jumpToWave(n) { enemies.clear(); effects.clear(); enemies.mods.speed = 1; enemies.mods.damage = 1; endFocus(); game.intermission = 0; game.queue = []; startWave(n); hud.hideScreen(); hud.setGameplayVisible(true); game.state = 'play'; game.menu = false; audio.reelLoop(false); }
 function hostStart() {
-  scores.clear(); for (const [id, p] of lobby.players) scores.set(id, { name: p.name, kills: 0, deaths: 0 });
-  // deal everyone a different spot, shuffled so the same people do not always start together
-  setArena(true); const order = spawnSpots().map((_, i) => i); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  const spawns = {}; [...lobby.players.keys()].forEach((id, i) => { spawns[id] = order[i % order.length]; });
-  net.send('start', { spawns, map: lobby.map || mapKey }); startMatch(false, spawns[net.id]); sendScores();
+  ensureLobbyTeams(); broadcastLobby();
+  scores.clear(); for (const [id, p] of lobby.players) scores.set(id, { name: p.name, team: p.team, kills: 0, deaths: 0 });
+  // Teams start on opposite sides; slots inside each side are shuffled.
+  setArena(true); const ordered = spawnSpots().map((s, i) => ({ i, x: s.x })).sort((a, b) => a.x - b.x).map((x) => x.i);
+  let red = ordered.slice(0, Math.ceil(ordered.length / 2)), yellow = ordered.slice(Math.ceil(ordered.length / 2));
+  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }; red = shuffle(red); yellow = shuffle(yellow);
+  const used = [0, 0], spawns = {}; for (const [id, p] of lobby.players) { const pool = p.team === TEAM_YELLOW ? yellow : red; spawns[id] = pool[used[p.team]++ % Math.max(1, pool.length)] ?? ordered[0]; }
+  const teams = {}; for (const [id, p] of lobby.players) teams[id] = p.team;
+  net.send('start', { spawns, teams, map: lobby.map || mapKey }); startMatch(false, spawns[net.id]); sendScores();
 }
 function startMatch(late, spawnIdx) {
-  net.inMatch = true; game.mode = 'ffa'; setArena(true); resetGame(); matchLeft = FFA_TIME; clockT = 0; game.clockStarted = false;
+  net.inMatch = true; game.mode = 'team'; setArena(true); resetGame(); matchLeft = MATCH_TIME; clockT = 0; game.clockStarted = false;
   // nobody sends snapshots in the lobby, so the silence clock restarts here or the sweep would drop everyone
   for (const r of remote.values()) r.lastSeen = performance.now();
-  if (!scores.size) for (const [id, p] of lobby.players) scores.set(id, { name: p.name, kills: 0, deaths: 0 });
+  if (!scores.size) for (const [id, p] of lobby.players) scores.set(id, { name: p.name, team: p.team, kills: 0, deaths: 0 });
   const spots = spawnSpots(); player.reset(spawnIdx != null && spots[spawnIdx] ? spots[spawnIdx].clone() : arenaSpawn()); beginCommon(); game.state = 'play'; screen = 'lobby'; player.shieldT = 2;
-  refreshScoreHud(); hud.message('自由混战', late ? '你加入了一场进行中的对战' : '先到 ' + FFA_TARGET + ' 杀 · ' + Math.round(FFA_TIME / 60) + ' 分钟 · 人人都是目标', 3);
-  hud.tip(`按住 <b>${hud.key('score')}</b> 查看计分板`, 5);
+  refreshScoreHud(); hud.message(teamName(player.team), late ? 'you joined your team mid-match' : 'team deathmatch · first team to ' + TEAM_TARGET + ' · friendly fire is off', 3);
+  hud.tip(`hold <b>${hud.key('score')}</b> for the scoreboard`, 5);
   // a match started by someone else's click cannot grab the mouse: ask for a click
   setTimeout(() => { if (game.state === 'play' && !input.pointerLocked && !input.usingGamepad) { game.menu = true; showClickToPlay(); } }, 250);
 }
@@ -780,12 +835,12 @@ function step(now) {
   if (st === 'start' || st === 'pause' || st === 'dead' || st === 'over') { if (input.pressed('jump') || input.pressed('confirm') || (st === 'pause' && input.pressed('pause'))) hud.onScreenClick(); }
   else if ((st === 'play' || (st === 'dying' && online())) && input.pressed('pause')) { if (game.menu) resume(); else { pause(); input.exitLock(); } }
   else if ((st === 'play' || st === 'dying') && game.menu && (input.pressed('jump') || input.pressed('confirm'))) resume();
-  if (input.pressed('music')) { musicWanted = !musicWanted; localStorage.setItem('doodle_music', musicWanted ? '1' : '0'); audio.musicOn(musicWanted); hud.tip(musicWanted ? '音乐已开启' : '音乐已关闭', 1.5); }
+  if (input.pressed('music')) { musicWanted = !musicWanted; localStorage.setItem('doodle_music', musicWanted ? '1' : '0'); audio.musicOn(musicWanted); hud.tip(musicWanted ? 'music on' : 'music off', 1.5); }
   if (online() && playing) {
     if (input.usingGamepad && input.pressed('score')) boardToggle = !boardToggle;
     const want = ((input.down('score') && !input.usingGamepad) || boardToggle) && !game.menu; if (want !== !hud.el.board.hidden) hud.setBoard(want ? boardHTML() : null);
   } else boardToggle = false;
-  if (st === 'play' && !game.menu && !input.pointerLocked && !input.usingGamepad) { lockTipT -= dt; if (lockTipT <= 0) { lockTipT = 2.5; hud.tip('点击画面以锁定鼠标', 2); } }
+  if (st === 'play' && !game.menu && !input.pointerLocked && !input.usingGamepad) { lockTipT -= dt; if (lockTipT <= 0) { lockTipT = 2.5; hud.tip('click the page to grab the mouse', 2); } }
   let scale = 1;
   if (game.hitstopT > 0) { game.hitstopT -= dt; scale = game.hitstopScale; }
   else if (game.focus.active) scale = FOCUS_SCALE;
@@ -803,11 +858,11 @@ function step(now) {
       game.deathT += dt;
       if (online()) {
         const before = Math.ceil(game.respawnT); game.respawnT -= dt; const left = Math.ceil(game.respawnT);
-        if (left > 0) { if (left !== before || game.deathT <= dt) hud.message(String(left), '即将回到场上', 1.1); }
+        if (left > 0) { if (left !== before || game.deathT <= dt) hud.message(String(left), 'back on the page in', 1.1); }
         else if (before > 0) { game.respawnArm = input.lastActive; game.promptT = 0; }
         else if (!game.menu) {
           // waiting on a press: any key, button or click brings you back; pause opens the menu instead
-          game.promptT -= dt; if (game.promptT <= 0) { game.promptT = 1.4; hud.message('就绪', `按 ${hud.key('confirm')} · 任意按键或点击即可重生`, 1.5); }
+          game.promptT -= dt; if (game.promptT <= 0) { game.promptT = 1.4; hud.message('READY', `press ${hud.key('confirm')} · any button or click to respawn`, 1.5); }
           if (input.lastActive !== game.respawnArm && !input.pressed('pause') && !input.down('pause')) respawnLocal();
         }
       }
@@ -822,8 +877,8 @@ function step(now) {
   const w = player.weapon; if (w.isGun) hud.setAmmo(w.mag, w.reserve, w.magSize, w.reloading); else hud.setKatana();
   hud.setSlots(player.weapons.map((wp, i) => ({ name: wp.name, active: i === player.weaponIndex, ammo: wp.isGun ? wp.mag + '/' + wp.reserve : '∞', empty: wp.isGun && wp.mag === 0 && wp.reserve === 0 })));
   hud.setGrenades(player.grenades); hud.setGrappleStamina(player.grapStam); hud.setHealth(player.hp, player.maxHp); hud.setSpread(w.spreadPx); hud.update(dt);
-  if (online()) hud.setFocusMeter(playing, player.grapStam, false, '抓钩');
-  else hud.setFocusMeter(playing && (w.kind === 'katana' || game.katanaStreak > 0 || game.focus.active), game.focus.active ? 1 : clamp(game.katanaStreak / KATANA_CHARGE_KILLS, 0, 1), game.focus.active, '太刀');
+  if (online()) hud.setFocusMeter(playing, player.grapStam, false, 'GRAPPLE');
+  else hud.setFocusMeter(playing && (w.kind === 'katana' || game.katanaStreak > 0 || game.focus.active), game.focus.active ? 1 : clamp(game.katanaStreak / KATANA_CHARGE_KILLS, 0, 1), game.focus.active, 'KATANA');
   if (game.boss) { if (game.boss.alive) hud.setBoss(game.boss.T.name, game.boss.hp / game.boss.maxHp); else { hud.setBoss(null, null); game.boss = null; } }
   audio.setIntensity(clamp((enemies.alive + game.queue.length + remote.size * 2) / 12, 0, 1) * (game.intermission > 0 ? 0.25 : 1));
   R.render(game.time, { hurt: player.hurtFx, flash: player.flashFx, slow: scale < 1 ? 1 : 0, lowHp: player.alive && player.hp < 30 ? 1 - player.hp / 30 : 0 });

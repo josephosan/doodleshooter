@@ -50,7 +50,7 @@ On-screen hints follow whichever device you touched last.
 
 ## Weapons and gear
 
-Rifle, shotgun, sniper (with scope) and a katana. Holding block with the katana parries
+Rifle, sniper (with scope) and a katana. Holding block with the katana parries
 some incoming bullets and returns a share of them. Katana kills charge a gauge; when it is lit you
 can dash to a marked enemy and execute it (solo only). Grenades bounce, then go off in a thick orange blast that scorches the paper; holding the
 button winds up a longer throw and shows the arc. The grapple runs on breath: hanging drains it,

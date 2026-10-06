@@ -6,3 +6,5 @@ serve.py
 Dockerfile
 docker-compose.yml
 .dockerignore
+.env
+turn-credentials.py

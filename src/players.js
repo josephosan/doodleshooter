@@ -3,12 +3,12 @@
 // target (body, center, eye, hit spheres, takeDamage) so the rest of the game does not care
 // whether it is shooting at a bot or a friend.
 import * as THREE from 'three';
-import { makeInkMaterial, setFill, INK } from './render.js';
+import { makeInkMaterial, setFill, setInk, INK } from './render.js';
 import { buildHumanoid, buildWeaponProp } from './enemies.js';
 import { clamp, damp, angleLerp, wrapAngle } from './util.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
-const WEAPON_KINDS = ['rifle', 'shotgun', 'sniper', 'blade'];
+const WEAPON_KINDS = ['rifle', 'sniper', 'blade'];
 const HIT = [['head', 0.3], ['torso', 0.33], ['hips', 0.2], ['armL', 0.11], ['armR', 0.11], ['foreL', 0.1], ['foreR', 0.1], ['legL', 0.13], ['legR', 0.13], ['shinL', 0.11], ['shinR', 0.11]];
 
 // what a player broadcasts about itself, ~20 times a second:
@@ -44,8 +44,12 @@ export class RemotePlayer {
     this.root.visible = false; this.ctx.scene.add(this.root); this.weaponIndex = -1;
     // a name tag: a little flag above the head so you know who is who
     this.tagG = new THREE.Group(); this.root.add(this.tagG); this.tagG.position.y = 2.25;
-    const flag = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.02), makeInkMaterial({ ink: this.ink, fill: true, side: THREE.DoubleSide })); this.tagG.add(flag);
+    this.tagFlag = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.02), makeInkMaterial({ ink: this.ink, fill: true, side: THREE.DoubleSide })); this.tagG.add(this.tagFlag);
     this.corpse = false;
+  }
+  setColor(ink) {
+    if (!Number.isInteger(ink)) return;
+    this.ink = ink; if (this.mat) setInk(this.mat, ink); if (this.tagFlag) setInk(this.tagFlag.material, ink);
   }
   // knocked flat with some physics: the whole figure tumbles away as debris (bits come off on a
   // big hit), and a fresh figure is drawn when the player comes back

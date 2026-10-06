@@ -4,5 +4,66 @@ services:
     image: doodleshooter:latest
     container_name: doodleshooter
     restart: unless-stopped
+    depends_on:
+      - turn_credentials
+      - peer_server
     ports:
-      - "127.0.0.1:8901:80"
+      - "0.0.0.0:8901:80"
+
+  turn_credentials:
+    image: python:3.13-alpine
+    container_name: doodleshooter_turn_credentials
+    restart: unless-stopped
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET is required}
+      TURN_HOST: ${TURN_HOST:-5.57.39.42}
+      TURN_TTL: ${TURN_TTL:-3600}
+    volumes:
+      - ./turn-credentials.py:/app/server.py:ro
+    command: ["python", "/app/server.py"]
+    expose:
+      - "8080"
+
+  peer_server:
+    image: peerjs/peerjs-server:1.0.2
+    container_name: doodleshooter_peer_server
+    restart: unless-stopped
+    command: ["--port", "9000", "--path", "/peerjs", "--proxied"]
+    expose:
+      - "9000"
+
+  turn:
+    image: coturn/coturn:4.18.0-r0-alpine
+    container_name: doodleshooter_turn
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET is required}
+      TURN_HOST: ${TURN_HOST:-5.57.39.42}
+    command:
+      - --log-file=stdout
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=doodleshooter.cmp
+      - --server-name=doodleshooter.cmp
+      - --external-ip=${TURN_HOST:-5.57.39.42}
+      - --listening-ip=${TURN_HOST:-5.57.39.42}
+      - --relay-ip=${TURN_HOST:-5.57.39.42}
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49220
+      - --user-quota=12
+      - --total-quota=80
+      - --max-bps=250000
+      - --bps-capacity=12000000
+      - --stale-nonce=600
+      - --no-multicast-peers
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=224.0.0.0-255.255.255.255

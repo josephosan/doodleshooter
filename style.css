@@ -45,9 +45,9 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .dmg-ind { position: absolute; left: 50%; top: 50%; }
 .dmg-ind i { position: absolute; left: -16px; top: -140px; width: 32px; height: 22px; transform-origin: 16px 140px; background: var(--red); clip-path: polygon(50% 0, 100% 100%, 0 100%); opacity: .9; animation: di 1s linear forwards; }
 @keyframes di { to { opacity: 0; } }
-.screen { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: auto; cursor: pointer; background: rgba(246, 243, 230, .55); }
+.screen { position: absolute; inset: 0; display: none; align-items: flex-start; justify-content: flex-start; box-sizing: border-box; padding: clamp(12px, 3vh, 28px) clamp(10px, 3vw, 28px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; pointer-events: auto; cursor: pointer; background: rgba(246, 243, 230, .55); }
 .screen.show { display: flex; }
-.panel { text-align: center; max-width: 980px; padding: 26px 48px; background: rgba(250, 248, 238, .93); box-shadow: 6px 6px 0 rgba(26, 48, 192, .15); border: 3px solid var(--ink); border-radius: 12px 18px 10px 16px / 16px 10px 18px 12px; transform: rotate(-.6deg); }
+.panel { box-sizing: border-box; flex: 0 0 auto; width: min(1082px, 100%); margin: auto; text-align: center; max-width: 1082px; padding: 26px 48px; background: rgba(250, 248, 238, .93); box-shadow: 6px 6px 0 rgba(26, 48, 192, .15); border: 3px solid var(--ink); border-radius: 12px 18px 10px 16px / 16px 10px 18px 12px; transform: rotate(-.6deg); }
 .panel h1 { font-size: 92px; margin: 0; letter-spacing: 3px; line-height: 1; }
 .panel h2 { font-size: 36px; margin: 4px 0 14px; font-weight: normal; }
 .panel .cols { display: flex; gap: 46px; justify-content: center; text-align: left; font-size: 22px; line-height: 1.35; }
@@ -58,7 +58,13 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .weapon { font-size: 36px; } .hint { font-size: 20px; opacity: .8; }
 .combo { font-size: 26px; color: var(--red); min-height: 30px; }
 .timer { font-size: 24px; color: var(--red); }
-@media (max-width: 900px) { .panel h1 { font-size: 56px; } .panel .cols { flex-direction: column; gap: 10px; font-size: 18px; } .msg-main { font-size: 56px; } }
+@media (max-width: 900px) { .panel { padding: 22px 24px; } .panel h1 { font-size: 56px; } .panel .cols { flex-direction: column; gap: 10px; font-size: 18px; } .msg-main { font-size: 56px; } }
+@media (max-width: 560px) {
+  .screen { padding: 8px; }
+  .panel { width: 100%; padding: 16px 12px; transform: none; }
+  .panel h1 { font-size: clamp(40px, 13vw, 56px); letter-spacing: 1px; }
+  .panel h2 { font-size: clamp(24px, 8vw, 32px); }
+}
 /* v2 additions */
 .crosshair.ads { opacity: 0; }
 .slots { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; margin-bottom: 6px; font-size: 20px; opacity: .85; }
@@ -249,3 +255,10 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .lobbyrow { display: grid; grid-template-columns: 96px 1fr auto auto; gap: 12px; align-items: center; font-size: 19px; padding: 3px 8px; border-bottom: 1.5px solid rgba(26,48,192,.2); }
 .lobbyrow .code { font-size: 22px; letter-spacing: 3px; padding: 0 8px; border-width: 2px; }
 .lobbyrow button { font-size: 18px; padding: 3px 12px; }
+
+@media (max-width: 560px) {
+  .mainbtns { width: 100%; gap: 10px; }
+  .mainbtns button { box-sizing: border-box; width: 100%; max-width: 100%; padding: 10px 12px; font-size: clamp(26px, 9vw, 36px); }
+  .mainbtns button i { white-space: normal; font-size: 14px; }
+  .mainbtns button.start { min-width: 0; width: 100%; padding: 14px 18px; font-size: clamp(38px, 13vw, 54px); }
+}

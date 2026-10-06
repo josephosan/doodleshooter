@@ -7,8 +7,15 @@ services:
     depends_on:
       - turn_credentials
       - peer_server
+    environment:
+      VIRTUAL_HOST: doodol.josephosanlou.ir
+      VIRTUAL_PORT: "80"
+      HTTPS_METHOD: redirect
     ports:
       - "0.0.0.0:8901:80"
+    networks:
+      - default
+      - core-net
 
   turn_credentials:
     image: python:3.13-alpine
@@ -67,3 +74,7 @@ services:
       - --denied-peer-ip=172.16.0.0-172.31.255.255
       - --denied-peer-ip=192.168.0.0-192.168.255.255
       - --denied-peer-ip=224.0.0.0-255.255.255.255
+
+networks:
+  core-net:
+    external: true

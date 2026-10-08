@@ -52,9 +52,11 @@ function applySettings() {
 }
 // ---------------- game state ----------------
 const TEAM_TARGET = 20, MATCH_TIME = 600, RESPAWN = 2.5;
-const TEAM_RED = 0, TEAM_YELLOW = 1;
-const TEAM_NAMES = ['RED TEAM', 'YELLOW TEAM'];
-const TEAM_INK = [INK.RED, INK.YELLOW];
+const TEAM_RED = 0, TEAM_ORANGE = 1;
+const TEAM_NAMES = ['RED TEAM', 'ORANGE TEAM'];
+const TEAM_INK = [INK.RED, INK.TEAM_ORANGE];
+const MATCH_TEAMS = 'teams', MATCH_FFA = 'ffa';
+const validMatchMode = (mode) => mode === MATCH_TEAMS || mode === MATCH_FFA;
 let matchLeft = MATCH_TIME, clockT = 0, clockRunning = false;
 const mmss = (t) => { t = Math.max(0, Math.ceil(t)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
 const game = ctx.game = {
@@ -64,15 +66,16 @@ const game = ctx.game = {
   addScore(pts, label) { const mult = 1 + Math.min(this.combo, 9) * 0.25; const p = Math.round(pts * mult); this.score += p; if (label) hud.kill(label, p); hud.setScore(this.score, this.combo); },
   onPlayerDeath() { endFocus(); onLocalDeath(); },
 };
-const online = () => game.mode === 'team';
+const online = () => game.mode === 'team' || game.mode === 'ffa';
+const teamMode = () => game.mode === 'team';
 const enemies = ctx.enemies = new EnemyManager(ctx);
 const player = ctx.player = new Player(ctx);
 player.name = myName;
 const net = new Net();
 const remote = new Map();      // peer id -> RemotePlayer
-const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null };
+const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null, matchMode: MATCH_TEAMS };
 const scores = new Map();      // peer id -> { name, team, kills, deaths }
-const validTeam = (team) => team === TEAM_RED || team === TEAM_YELLOW;
+const validTeam = (team) => team === TEAM_RED || team === TEAM_ORANGE;
 const teamInk = (team) => TEAM_INK[validTeam(team) ? team : TEAM_RED];
 const teamName = (team) => TEAM_NAMES[validTeam(team) ? team : TEAM_RED];
 const teamOf = (id) => {
@@ -86,7 +89,8 @@ window.__game = { ctx, game, player, enemies, nav, world, level, hud, effects, i
 
 // anything a bullet or a blade can hit besides enemies
 ctx.targets = () => [player, ...remote.values()];
-ctx.canHurt = (t) => online() && t !== player && validTeam(t.team) && t.team !== player.team;
+ctx.teamMode = teamMode;
+ctx.canHurt = (t) => online() && t !== player && validTeam(t.team) && (!teamMode() || t.team !== player.team);
 ctx.raycastPlayers = (o, d, maxDist) => {
   let best = null;
   for (const t of remote.values()) {
@@ -386,7 +390,7 @@ function arenaSpawn() {
 }
 // a spot for a late joiner: the one farthest from everybody already in the match
 function farthestSpawnIndex(team = player.team) {
-  const spots = spawnSpots(); const enemies = [player, ...remote.values()].filter((r) => r.alive && r.team !== team); let best = 0, bd = -1;
+  const spots = spawnSpots(); const enemies = [player, ...remote.values()].filter((r) => r.alive && (!teamMode() || r.team !== team)); let best = 0, bd = -1;
   spots.forEach((s, i) => { const d = enemies.reduce((a, r) => Math.min(a, r.body.pos.distanceTo(s)), 999); if (d > bd) { bd = d; best = i; } });
   return best;
 }
@@ -407,7 +411,7 @@ function respawnLocal() {
 }
 function tallyDeath(victim, killer) {
   const v = scores.get(victim); if (v) v.deaths++;
-  if (killer && killer !== victim) { const k = scores.get(killer); if (k && k.team !== (v && v.team)) k.kills++; }
+  if (killer && killer !== victim) { const k = scores.get(killer); if (k && (!teamMode() || k.team !== (v && v.team))) k.kills++; }
   sendScores(); checkWin();
 }
 function sendScores() { const rows = [...scores.entries()].map(([id, s]) => ({ id, ...s })); net.send('score', rows); applyScores(rows); }
@@ -420,29 +424,47 @@ function teamTotals() {
 function teamRows(team) { return sortedScores().filter(([, s]) => s.team === team); }
 function refreshScoreHud() {
   if (!online()) return;
+  if (!teamMode()) {
+    const rows = sortedScores().slice(0, 5);
+    hud.setPvpScore(`<div class="pvpscore">${rows.map(([id, s], i) => `<div class="row${id === net.id ? ' me' : ''}"><span class="rank">${i + 1}.</span><span>${esc(s.name)}</span><b>${s.kills}</b></div>`).join('')}<div class="target">FREE FOR ALL · first to ${TEAM_TARGET}</div></div>`);
+    hud.setModifier('FREE FOR ALL');
+    if (!hud.el.board.hidden) hud.setBoard(boardHTML());
+    return;
+  }
   const totals = teamTotals(); const mine = validTeam(player.team) ? player.team : TEAM_RED;
-  hud.setPvpScore(`<div class="teamhud"><div class="teamline redteam"><span>RED</span><b>${totals[TEAM_RED]}</b></div><div class="versus">VS</div><div class="teamline yellowteam"><span>YELLOW</span><b>${totals[TEAM_YELLOW]}</b></div></div><div class="target youteam ${mine === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">YOU · ${teamName(mine)} · first to ${TEAM_TARGET}</div>`);
+  hud.setPvpScore(`<div class="teamhud"><div class="teamline redteam"><span>RED</span><b>${totals[TEAM_RED]}</b></div><div class="versus">VS</div><div class="teamline orangeteam"><span>ORANGE</span><b>${totals[TEAM_ORANGE]}</b></div></div><div class="target youteam ${mine === TEAM_ORANGE ? 'orangeteam' : 'redteam'}">YOU · ${teamName(mine)} · first to ${TEAM_TARGET}</div>`);
   hud.setModifier(teamName(mine));
   if (!hud.el.board.hidden) hud.setBoard(boardHTML());
 }
 function teamScoreRows(team) {
   const rows = teamRows(team);
-  return `<section class="scoreteam ${team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}"><h4>${teamName(team)}</h4>${rows.length ? rows.map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${esc(s.name)}${id === net.id ? ' (you)' : ''}</span><span>${s.kills} K · ${s.deaths} D</span></div>`).join('') : '<div class="emptyteam">waiting for players</div>'}</section>`;
+  return `<section class="scoreteam ${team === TEAM_ORANGE ? 'orangeteam' : 'redteam'}"><h4>${teamName(team)}</h4>${rows.length ? rows.map(([id, s]) => `<div class="${id === net.id ? 'me' : ''}"><span>${esc(s.name)}${id === net.id ? ' (you)' : ''}</span><span>${s.kills} K · ${s.deaths} D</span></div>`).join('') : '<div class="emptyteam">waiting for players</div>'}</section>`;
 }
-function boardHTML(title = 'TEAM DEATHMATCH') {
+function ffaScoreRows() {
+  const rows = sortedScores();
+  return rows.map(([id, s], i) => `<div class="${id === net.id ? 'me' : ''}"><span>${i + 1}. ${esc(s.name)}${id === net.id ? ' (you)' : ''}</span><span>${s.kills} K · ${s.deaths} D</span></div>`).join('') || '<div><span>waiting for players</span></div>';
+}
+function boardHTML(title = teamMode() ? 'TEAM DEATHMATCH' : 'FREE FOR ALL') {
+  if (!teamMode()) return `<h3>${title}</h3><div class="scoreboard">${ffaScoreRows()}</div><div class="foot">first player to ${TEAM_TARGET} · ${mmss(matchLeft)} left · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</div>`;
   const totals = teamTotals();
-  return `<h3>${title}</h3><div class="teamsummary"><span class="redteam">RED <b>${totals[TEAM_RED]}</b></span><i>VS</i><span class="yellowteam">YELLOW <b>${totals[TEAM_YELLOW]}</b></span></div><div class="teamboards">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div><div class="foot">first team to ${TEAM_TARGET} · ${mmss(matchLeft)} left · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</div>`;
+  return `<h3>${title}</h3><div class="teamsummary"><span class="redteam">RED <b>${totals[TEAM_RED]}</b></span><i>VS</i><span class="orangeteam">ORANGE <b>${totals[TEAM_ORANGE]}</b></span></div><div class="teamboards">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_ORANGE)}</div><div class="foot">first team to ${TEAM_TARGET} · ${mmss(matchLeft)} left · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</div>`;
 }
 function checkWin() {
   if (!net.isHost || !online() || game.over) return;
+  if (!teamMode()) {
+    const leader = sortedScores().find(([, s]) => s.kills >= TEAM_TARGET);
+    if (leader) { const winner = { id: leader[0], name: leader[1].name }; net.send('end', winner); endMatch(winner); }
+    return;
+  }
   const totals = teamTotals(); let winner = null;
-  if (totals[TEAM_RED] >= TEAM_TARGET || totals[TEAM_YELLOW] >= TEAM_TARGET) { const team = totals[TEAM_YELLOW] > totals[TEAM_RED] ? TEAM_YELLOW : TEAM_RED; winner = { team, name: teamName(team) }; }
+  if (totals[TEAM_RED] >= TEAM_TARGET || totals[TEAM_ORANGE] >= TEAM_TARGET) { const team = totals[TEAM_ORANGE] > totals[TEAM_RED] ? TEAM_ORANGE : TEAM_RED; winner = { team, name: teamName(team) }; }
   if (winner) { net.send('end', winner); endMatch(winner); }
 }
 function endMatch(winner) {
   game.over = winner; game.overT = 0; game.state = 'over'; endFocus(); input.exitLock(); hud.setBoard(null);
-  const title = winner.draw ? 'DRAW' : winner.team === player.team ? 'YOUR TEAM WINS' : teamName(winner.team) + ' WINS';
-  hud.setGameplayVisible(false); hud.showScreen(`<h1>${title}</h1><div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div><div class="go" id="overGo">back to the lobby in a moment…</div>`);
+  const title = winner.draw ? 'DRAW' : teamMode() ? (winner.team === player.team ? 'YOUR TEAM WINS' : teamName(winner.team) + ' WINS') : (winner.id === net.id ? 'YOU WIN' : esc(winner.name || 'SOMEONE') + ' WINS');
+  const results = teamMode() ? `<div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_ORANGE)}</div>` : `<div class="scoreboard">${ffaScoreRows()}</div>`;
+  hud.setGameplayVisible(false); hud.showScreen(`<h1>${title}</h1>${results}<div class="go" id="overGo">back to the lobby in a moment…</div>`);
 }
 
 // ---------------- networking ----------------
@@ -457,15 +479,19 @@ function removeRemote(id) { const r = remote.get(id); if (r) { r.dispose(); remo
 function lobbyRows() { return [...lobby.players.entries()].map(([id, p]) => ({ id, name: p.name, team: p.team })); }
 function pickBalancedTeam() {
   const counts = [0, 0]; for (const p of lobby.players.values()) if (validTeam(p.team)) counts[p.team]++;
-  return counts[TEAM_RED] === counts[TEAM_YELLOW] ? (Math.random() < 0.5 ? TEAM_RED : TEAM_YELLOW) : (counts[TEAM_RED] < counts[TEAM_YELLOW] ? TEAM_RED : TEAM_YELLOW);
+  return counts[TEAM_RED] === counts[TEAM_ORANGE] ? (Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE) : (counts[TEAM_RED] < counts[TEAM_ORANGE] ? TEAM_RED : TEAM_ORANGE);
 }
 function ensureLobbyTeams() {
   if (!net.isHost || inMatch()) return;
   for (const [id, p] of lobby.players) if (!validTeam(p.team)) { p.team = pickBalancedTeam(); if (id === net.id) player.team = p.team; else addRemote(id, p.name, p.team); }
 }
-function broadcastLobby() { net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, shown: net.aliasCode || net.code }); renderLobby(); }
+function broadcastLobby() { net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, matchMode: lobby.matchMode, shown: net.aliasCode || net.code }); renderLobby(); }
+function setLobbyMode(mode) {
+  if (!net.isHost || game.state !== 'lobby' || !validMatchMode(mode)) return false;
+  lobby.matchMode = mode; localStorage.setItem('doodle_match_mode', mode); lobby.status = ''; broadcastLobby(); return true;
+}
 function setLobbyTeam(id, team) {
-  if (!net.isHost || game.state !== 'lobby' || !validTeam(team)) return false;
+  if (!net.isHost || game.state !== 'lobby' || lobby.matchMode !== MATCH_TEAMS || !validTeam(team)) return false;
   const p = lobby.players.get(id); if (!p) return false;
   p.team = team; if (id === net.id) player.team = team; else addRemote(id, p.name, team);
   lobby.status = ''; broadcastLobby(); return true;
@@ -520,10 +546,10 @@ net.onPeerJoin = (from, meta) => {
   }
   const team = validTeam(preservedTeam) ? preservedTeam : (meta && meta.prev && validTeam(meta.team) ? meta.team : pickBalancedTeam());
   lobby.players.set(from, { name, team }); addRemote(from, name, team); ensureLobbyTeams(); broadcastLobby();
-  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + ' joined ' + teamName(team), 0); }
+  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, matchMode: lobby.matchMode, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + (teamMode() ? ' joined ' + teamName(team) : ' joined the free for all'), 0); }
 };
 net.on('lobby', (d) => {
-  lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; if (d.map) lobby.map = knownMap(d.map); lobby.order = d.players.map((p) => p.id); lobby.players.clear();
+  lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; lobby.order = d.players.map((p) => p.id); lobby.players.clear();
   for (const p of d.players) lobby.players.set(p.id, { name: p.name, team: validTeam(p.team) ? p.team : TEAM_RED });
   const mine = lobby.players.get(net.id); if (mine) { player.team = mine.team; lobby.status = ''; }
   for (const p of d.players) if (p.id !== net.id) addRemote(p.id, p.name, lobby.players.get(p.id).team);
@@ -533,7 +559,7 @@ net.on('lobby', (d) => {
 });
 net.on('teamreq', (d, from) => { if (net.isHost) setLobbyTeam(from, Number(d && d.team)); });
 net.on('leave', (d) => { const nm = (lobby.players.get(d.id) || {}).name; removeRemote(d.id); if (inMatch()) hud.kill((nm || 'someone') + ' left', 0); renderLobby(); });
-net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); const assigned = d.teams && d.teams[net.id]; if (validTeam(d.team)) player.team = d.team; else if (validTeam(assigned)) player.team = assigned; startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
+net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; const assigned = d.teams && d.teams[net.id]; if (validTeam(d.team)) player.team = d.team; else if (validTeam(assigned)) player.team = assigned; startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn, lobby.matchMode); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
 net.on('end', (d) => endMatch(d));
 net.on('backtolobby', () => { if (!net.isHost) toLobbyScreen(); });
 net.on('pickup', (d) => { if (!net.isHost) spawnPickup(d.kind, new THREE.Vector3().fromArray(d.pos), d.id); });
@@ -541,14 +567,14 @@ net.on('taken', (d) => { const p = pickups.find((x) => x.id === d.id); if (p) re
 net.on('take', (d) => { if (!net.isHost) return; const p = pickups.find((x) => x.id === d.id); if (p) { removePickup(p); net.send('taken', { id: d.id }); } });
 net.on('ps', (d, from) => { const r = remote.get(from); if (r) { r.push(d, performance.now() / 1000); r.lastSeen = performance.now(); } });
 net.on('pdmg', (d) => {
-  if (!player.alive || game.state !== 'play' || player.shieldT > 0 || (d.by && teamOf(d.by) === player.team)) return; player.lastHitBy = d.by || null; player.lastHit = { from: d.from || null, crit: !!d.crit, amount: d.amount, src: d.src };
+  if (!player.alive || game.state !== 'play' || player.shieldT > 0 || (teamMode() && d.by && teamOf(d.by) === player.team)) return; player.lastHitBy = d.by || null; player.lastHit = { from: d.from || null, crit: !!d.crit, amount: d.amount, src: d.src };
   player.takeDamage(d.amount, d.from ? new THREE.Vector3().fromArray(d.from) : null);
 });
 net.on('pdead', (d, from) => {
   const r = remote.get(from); const vn = r ? r.name : 'someone'; const kn = d.killer && scores.get(d.killer) ? scores.get(d.killer).name : null;
   if (r) { r.ragdoll(d.dir ? new THREE.Vector3().fromArray(d.dir) : null, !!d.over); audio.enemyDie(r.center); }
   const how = d.how ? ' · ' + d.how + (d.crit ? ' headshot' : '') : '';
-  if (d.killer === net.id && (!r || r.team !== player.team)) { game.kills++; game.addScore(100, 'ERASED ' + vn + how); audio.kill(true); }
+  if (d.killer === net.id && (!teamMode() || !r || r.team !== player.team)) { game.kills++; game.addScore(100, 'ERASED ' + vn + how); audio.kill(true); }
   else hud.kill(kn ? kn + ' erased ' + vn + how : vn + ' fell off the page', 0);
   if (net.isHost) tallyDeath(from, d.killer);
 });
@@ -564,12 +590,12 @@ net.on('shots', (d, from) => {
 });
 net.on('cut', () => { if (player.grapple.state !== 'idle') { player.detachGrapple(false); effects.strokeBurst(player.center, INK.ORANGE, 8, 4, { life: 0.25, size: 0.03 }); hud.tip('your rope got cut', 1.3); input.rumble(0.5, 0.3, 80); } });
 net.on('score', (rows) => { if (!net.isHost) applyScores(rows); });
-net.on('fell', (d, from) => { if (!net.isHost) return; const sc = scores.get(from); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' fell off the page · -1 team point' }); hud.kill(sc.name + ' fell off the page · -1 team point', 0); } });
+net.on('fell', (d, from) => { if (!net.isHost) return; const sc = scores.get(from); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); const text = sc.name + ' fell off the page · -1 ' + (teamMode() ? 'team ' : '') + 'point'; net.send('feed', { text }); hud.kill(text, 0); } });
 net.on('feed', (d) => hud.kill(String(d.text || ''), 0));
 player.onFall = () => {
   if (!online() || !inMatch()) return;
-  hud.kill('fell off the page · -1 team point', 0);
-  if (net.isHost) { const sc = scores.get(net.id); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' fell off the page · -1 team point' }); } }
+  hud.kill('fell off the page · -1 ' + (teamMode() ? 'team ' : '') + 'point', 0);
+  if (net.isHost) { const sc = scores.get(net.id); if (sc) { sc.kills = Math.max(0, sc.kills - 1); sendScores(); net.send('feed', { text: sc.name + ' fell off the page · -1 ' + (teamMode() ? 'team ' : '') + 'point' }); } }
   else net.send('fell', {});
 };
 net.on('clock', (d) => { if (!net.isHost) { matchLeft = d.left; clockRunning = !!d.on; } });
@@ -603,7 +629,12 @@ function netUpdate(dt) {
   if (net.isHost && inMatch() && remote.size > 0) game.clockStarted = true;
   const clockOn = inMatch() && !game.over && (net.isHost ? !!game.clockStarted : clockRunning);
   if (inMatch() && !game.over) { if (clockOn) matchLeft = Math.max(0, matchLeft - dt); if (net.isHost) { clockT -= dt; if (clockT <= 0) { clockT = 2; net.send('clock', { left: Math.round(matchLeft), on: clockOn }); } } hud.setTimer(clockOn ? mmss(matchLeft) : 'clock starts when someone joins'); }
-  if (net.isHost && clockOn) { game.matchT += dt; if (matchLeft <= 0) { const totals = teamTotals(); const w = totals[TEAM_RED] === totals[TEAM_YELLOW] ? { draw: true } : { team: totals[TEAM_YELLOW] > totals[TEAM_RED] ? TEAM_YELLOW : TEAM_RED }; net.send('end', w); endMatch(w); } }
+  if (net.isHost && clockOn) { game.matchT += dt; if (matchLeft <= 0) {
+    let w;
+    if (teamMode()) { const totals = teamTotals(); w = totals[TEAM_RED] === totals[TEAM_ORANGE] ? { draw: true } : { team: totals[TEAM_ORANGE] > totals[TEAM_RED] ? TEAM_ORANGE : TEAM_RED }; }
+    else { const rows = sortedScores(); w = !rows.length || (rows[1] && rows[0][1].kills === rows[1][1].kills) ? { draw: true } : { id: rows[0][0], name: rows[0][1].name }; }
+    net.send('end', w); endMatch(w);
+  } }
 }
 function leaveOnline(reason) {
   net.leave(); for (const id of [...remote.keys()]) removeRemote(id); lobby.players.clear(); scores.clear(); hud.setBoard(null);
@@ -614,7 +645,7 @@ async function createLobby(isPublic) {
   setStatus('opening a lobby…');
   try { await net.host({ isPublic }); }
   catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
-  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_YELLOW; lobby.players.set(net.id, { name: myName, team: player.team }); lobby.hostId = net.id; lobby.status = '';
+  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.matchMode = validMatchMode(localStorage.getItem('doodle_match_mode')) ? localStorage.getItem('doodle_match_mode') : MATCH_TEAMS; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE; lobby.players.set(net.id, { name: myName, team: player.team }); lobby.hostId = net.id; lobby.status = '';
   game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function joinLobby(code) {
@@ -674,11 +705,11 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 function mainHTML() {
   return `<h1>DOODLE DISTRICT</h1><h2>a scribbled survival shooter</h2>
-    <div class="mainbtns"><button type="button" class="start" id="soloBtn">START<i>solo · survive the waves</i></button><button type="button" id="onlineBtn">PLAY ONLINE<i>choose red or yellow · up to 10 players</i></button></div>
+    <div class="mainbtns"><button type="button" class="start" id="soloBtn">START<i>solo · survive the waves</i></button><button type="button" id="onlineBtn">PLAY ONLINE<i>free for all or red vs orange · up to 10 players</i></button></div>
     ${mapHTML(mapKey, true)}${CONTROLS_HTML}${settingsHTML()}${checkpointHTML()}${best ? `<div class="beststat">best score: ${best}</div>` : ''}`;
 }
 function onlineHTML() {
-  return `<h1>PLAY ONLINE</h1><h2>choose red or yellow · first team to ${TEAM_TARGET} · up to 10 players</h2>
+  return `<h1>PLAY ONLINE</h1><h2>free for all or red vs orange teams · first to ${TEAM_TARGET} · up to 10 players</h2>
     <div class="online" id="online">
       <div class="row"><span>your name</span><input type="text" class="namebox" id="setName" maxlength="14" value="${esc(myName)}"></div>
       <div class="row"><button type="button" class="big" id="quickBtn">QUICK PLAY</button><span class="hint">jumps into an open public lobby, or opens one for you</span></div>
@@ -694,16 +725,20 @@ function onlineHTML() {
 function lobbyHTML() {
   const rows = lobbyRows(); const host = net.isHost; const n = rows.length;
   const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const ffaList = rows.map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
   const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team;
-  return `<h1>LOBBY</h1><h2>choose your team · first team to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
+  const teams = lobby.matchMode === MATCH_TEAMS;
+  return `<h1>LOBBY</h1><h2>${teams ? 'choose your team · first team' : 'free for all · first player'} to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
     <div class="online" id="online">
       <div class="row"><span>code</span><span class="code">${String(net.isHost ? (net.aliasCode || net.code) : (lobby.shown || net.code) || '').replace(/-\d+$/, '')}</span></div>
       ${mapHTML(lobby.map || mapKey, host)}
       <div class="hint">${lobby.isPublic ? 'this lobby is public: anyone can quick play in, or type the code' : 'private lobby: friends type this code under PLAY ONLINE → JOIN'}</div>
-      <div class="teamchoice" role="group" aria-label="Choose your team"><span>your team</span><button type="button" class="redteam${myTeam === TEAM_RED ? ' on' : ''}" data-team="${TEAM_RED}" aria-pressed="${myTeam === TEAM_RED}">RED TEAM</button><button type="button" class="yellowteam${myTeam === TEAM_YELLOW ? ' on' : ''}" data-team="${TEAM_YELLOW}" aria-pressed="${myTeam === TEAM_YELLOW}">YELLOW TEAM</button></div>
-      <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="yellowteam"><h3>YELLOW TEAM</h3><div class="plist">${teamList(TEAM_YELLOW)}</div></section></div>
+      <div class="modes" role="group" aria-label="Match mode"><button type="button" class="modebtn${lobby.matchMode === MATCH_FFA ? ' on' : ''}" data-match-mode="${MATCH_FFA}" ${host ? '' : 'disabled'}>FREE FOR ALL<i>everyone can fight everyone</i></button><button type="button" class="modebtn${teams ? ' on' : ''}" data-match-mode="${MATCH_TEAMS}" ${host ? '' : 'disabled'}>TEAMS<i>red vs orange · no friendly fire</i></button></div>
+      <div class="hint">${host ? 'host chooses the match mode' : `host selected ${teams ? 'red vs orange teams' : 'free for all'}`}</div>
+      ${teams ? `<div class="teamchoice" role="group" aria-label="Choose your team"><span>your team</span><button type="button" class="redteam${myTeam === TEAM_RED ? ' on' : ''}" data-team="${TEAM_RED}" aria-pressed="${myTeam === TEAM_RED}">RED TEAM</button><button type="button" class="orangeteam${myTeam === TEAM_ORANGE ? ' on' : ''}" data-team="${TEAM_ORANGE}" aria-pressed="${myTeam === TEAM_ORANGE}">ORANGE TEAM</button></div>
+      <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="orangeteam"><h3>ORANGE TEAM</h3><div class="plist">${teamList(TEAM_ORANGE)}</div></section></div>` : `<div class="teamroster ffaroster"><section><h3>EVERY PLAYER IS AN ENEMY</h3><div class="plist">${ffaList}</div></section></div>`}
       <div class="row">${host ? '<button type="button" class="big" id="startBtn">START MATCH</button>' : '<span class="hint">waiting for the host to start the match…</span>'}<button type="button" class="alt" id="leaveBtn">LEAVE</button></div>
-      <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">choose or switch teams before the match starts · new players receive a balanced default</div>
+      <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">${teams ? 'choose or switch teams before the match starts · new players receive a balanced default' : 'every player can damage every other player'}</div>
     </div>`;
 }
 let lobbyList = null, listBusy = false;
@@ -730,6 +765,7 @@ function wireOnline() {
   if (q('refreshBtn')) { q('refreshBtn').addEventListener('click', () => refreshLobbies()); if (!lobbyList && !listBusy) refreshLobbies(); }
   if (q('lobbyRows')) q('lobbyRows').addEventListener('click', (e) => { const b = e.target.closest('button[data-join]'); if (b) { lockButtons(box); joinLobby(b.dataset.join); } });
   const teamChoice = box.querySelector('.teamchoice'); if (teamChoice) teamChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-team]'); if (b) chooseTeam(Number(b.dataset.team)); });
+  const modeChoice = box.querySelector('.modes'); if (modeChoice) modeChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-match-mode]'); if (b && !b.disabled) setLobbyMode(b.dataset.matchMode); });
   wireMap((k) => { if (net.isHost) { lobby.map = k; broadcastLobby(); } });
   if (q('startBtn')) q('startBtn').addEventListener('click', () => hostStart());
   if (q('leaveBtn')) q('leaveBtn').addEventListener('click', () => { lobby.rejoinCode = null; leaveOnline(''); });
@@ -751,13 +787,15 @@ function showStart() {
 }
 function showPause() {
   if (online()) {
-    hud.showScreen(`<h1>MENU</h1><h2>team deathmatch · you are on <span class="${player.team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">${teamName(player.team)}</span> · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</h2><div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_YELLOW)}</div>${CONTROLS_HTML}${settingsHTML()}<div class="online" id="online"><div class="row"><button type="button" class="alt" id="leaveBtn">LEAVE MATCH</button></div></div><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO KEEP PLAYING</div>`);
+    const matchTitle = teamMode() ? `team deathmatch · you are on <span class="${player.team === TEAM_ORANGE ? 'orangeteam' : 'redteam'}">${teamName(player.team)}</span>` : 'free for all · everyone is an enemy';
+    const matchScores = teamMode() ? `<div class="scoreboard teamresults">${teamScoreRows(TEAM_RED)}${teamScoreRows(TEAM_ORANGE)}</div>` : `<div class="scoreboard">${ffaScoreRows()}</div>`;
+    hud.showScreen(`<h1>MENU</h1><h2>${matchTitle} · lobby ${String(net.aliasCode || net.code || '').replace(/-\d+$/, '')}</h2>${matchScores}${CONTROLS_HTML}${settingsHTML()}<div class="online" id="online"><div class="row"><button type="button" class="alt" id="leaveBtn">LEAVE MATCH</button></div></div><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO KEEP PLAYING</div>`);
     wireSettings(); wireOnline(); return;
   }
   hud.showScreen(`<h1>PAUSED</h1><h2>wave ${game.wave} · score ${game.score}</h2>${CONTROLS_HTML}${settingsHTML()}${menuBtnHTML()}<div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO RESUME</div>`);
   wireSettings(); wireMenuBtn();
 }
-function showClickToPlay() { hud.showScreen(`<h1>MATCH ON</h1><h2>team deathmatch · you are on <span class="${player.team === TEAM_YELLOW ? 'yellowteam' : 'redteam'}">${teamName(player.team)}</span></h2><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO PLAY</div>`); }
+function showClickToPlay() { hud.showScreen(`<h1>MATCH ON</h1><h2>${teamMode() ? `team deathmatch · you are on <span class="${player.team === TEAM_ORANGE ? 'orangeteam' : 'redteam'}">${teamName(player.team)}</span>` : 'free for all · everyone is an enemy'}</h2><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO PLAY</div>`); }
 function showDead() {
   hud.setGameplayVisible(false); const nb = game.score > best; if (nb) { best = game.score; localStorage.setItem('doodle_best', String(best)); }
   hud.showScreen(`<h1>ERASED</h1><div class="stats">you survived <b>${game.wave}</b> wave${game.wave === 1 ? '' : 's'} · <b>${game.kills}</b> kills · score <b>${game.score}</b>${nb ? ' · <b>NEW BEST</b>' : ` · best ${best}`}</div>${checkpointHTML()}${menuBtnHTML()}<div class="go">CLICK (or press ${hud.key('confirm')}) TO DRAW AGAIN</div>`);
@@ -783,21 +821,26 @@ function jumpToWave(n) { enemies.clear(); effects.clear(); enemies.mods.speed = 
 function hostStart() {
   ensureLobbyTeams(); broadcastLobby();
   scores.clear(); for (const [id, p] of lobby.players) scores.set(id, { name: p.name, team: p.team, kills: 0, deaths: 0 });
-  // Teams start on opposite sides; slots inside each side are shuffled.
   setArena(true); const ordered = spawnSpots().map((s, i) => ({ i, x: s.x })).sort((a, b) => a.x - b.x).map((x) => x.i);
-  let red = ordered.slice(0, Math.ceil(ordered.length / 2)), yellow = ordered.slice(Math.ceil(ordered.length / 2));
-  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }; red = shuffle(red); yellow = shuffle(yellow);
-  const used = [0, 0], spawns = {}; for (const [id, p] of lobby.players) { const pool = p.team === TEAM_YELLOW ? yellow : red; spawns[id] = pool[used[p.team]++ % Math.max(1, pool.length)] ?? ordered[0]; }
+  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const spawns = {};
+  if (lobby.matchMode === MATCH_TEAMS) {
+    // Teams start on opposite sides; slots inside each side are shuffled.
+    let red = shuffle(ordered.slice(0, Math.ceil(ordered.length / 2))), orange = shuffle(ordered.slice(Math.ceil(ordered.length / 2)));
+    const used = [0, 0]; for (const [id, p] of lobby.players) { const pool = p.team === TEAM_ORANGE ? orange : red; spawns[id] = pool[used[p.team]++ % Math.max(1, pool.length)] ?? ordered[0]; }
+  } else {
+    const open = shuffle([...ordered]); let i = 0; for (const id of lobby.players.keys()) spawns[id] = open[i++ % Math.max(1, open.length)] ?? ordered[0];
+  }
   const teams = {}; for (const [id, p] of lobby.players) teams[id] = p.team;
-  net.send('start', { spawns, teams, map: lobby.map || mapKey }); startMatch(false, spawns[net.id]); sendScores();
+  net.send('start', { spawns, teams, matchMode: lobby.matchMode, map: lobby.map || mapKey }); startMatch(false, spawns[net.id], lobby.matchMode); sendScores();
 }
-function startMatch(late, spawnIdx) {
-  net.inMatch = true; game.mode = 'team'; setArena(true); resetGame(); matchLeft = MATCH_TIME; clockT = 0; game.clockStarted = false;
+function startMatch(late, spawnIdx, matchMode = lobby.matchMode) {
+  lobby.matchMode = validMatchMode(matchMode) ? matchMode : MATCH_TEAMS; net.inMatch = true; game.mode = lobby.matchMode === MATCH_FFA ? 'ffa' : 'team'; setArena(true); resetGame(); matchLeft = MATCH_TIME; clockT = 0; game.clockStarted = false;
   // nobody sends snapshots in the lobby, so the silence clock restarts here or the sweep would drop everyone
   for (const r of remote.values()) r.lastSeen = performance.now();
   if (!scores.size) for (const [id, p] of lobby.players) scores.set(id, { name: p.name, team: p.team, kills: 0, deaths: 0 });
   const spots = spawnSpots(); player.reset(spawnIdx != null && spots[spawnIdx] ? spots[spawnIdx].clone() : arenaSpawn()); beginCommon(); game.state = 'play'; screen = 'lobby'; player.shieldT = 2;
-  refreshScoreHud(); hud.message(teamName(player.team), late ? 'you joined your team mid-match' : 'team deathmatch · first team to ' + TEAM_TARGET + ' · friendly fire is off', 3);
+  refreshScoreHud(); hud.message(teamMode() ? teamName(player.team) : 'FREE FOR ALL', late ? (teamMode() ? 'you joined your team mid-match' : 'you joined mid-match · everyone is an enemy') : (teamMode() ? 'team deathmatch · first team to ' + TEAM_TARGET + ' · friendly fire is off' : 'first player to ' + TEAM_TARGET + ' · everyone can fight everyone'), 3);
   hud.tip(`hold <b>${hud.key('score')}</b> for the scoreboard`, 5);
   // a match started by someone else's click cannot grab the mouse: ask for a click
   setTimeout(() => { if (game.state === 'play' && !input.pointerLocked && !input.usingGamepad) { game.menu = true; showClickToPlay(); } }, 250);

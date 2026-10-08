@@ -140,6 +140,7 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .modebtn { font: inherit; font-size: 21px; color: var(--ink); background: transparent; border: 2.5px solid var(--ink); border-radius: 7px 10px 6px 9px / 10px 6px 9px 7px; padding: 6px 14px; cursor: pointer; opacity: .6; display: flex; flex-direction: column; align-items: center; line-height: 1.1; transform: rotate(-.5deg); min-width: 130px; }
 .modebtn i { font-style: normal; font-size: 14px; opacity: .8; }
 .modebtn:hover { opacity: .9; } .modebtn.on { opacity: 1; color: var(--paper); background: var(--ink); }
+.modebtn:disabled { cursor: default; }
 .lobby { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 8px; }
 .lobby .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
 .lobby input[type=text] { font: inherit; font-size: 24px; width: 130px; text-align: center; letter-spacing: 4px; text-transform: uppercase; color: var(--ink); border: 2.5px solid var(--ink); border-radius: 6px 9px 6px 8px; background: transparent; padding: 3px 6px; }
@@ -206,15 +207,15 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .pvpscore .row .rank { opacity: .6; }
 .pvpscore .target { font-size: 15px; opacity: .65; margin-top: 2px; }
 
-/* red vs yellow team mode */
+/* red vs orange team mode */
 .redteam { color: #d02030 !important; }
-.yellowteam { color: #c99700 !important; }
+.orangeteam { color: #e94712 !important; text-shadow: 0 1px 0 rgba(255,255,255,.8); }
 .teamchoice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 5px auto 10px; }
 .teamchoice > span { font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
 .teamchoice button { min-width: 150px; border-color: currentColor; background: rgba(250,248,238,.82); }
 .teamchoice button.on { color: #fff !important; box-shadow: 3px 4px 0 var(--ink); transform: translate(-1px,-1px) rotate(-.4deg); }
 .teamchoice button.redteam.on { background: #d02030; }
-.teamchoice button.yellowteam.on { background: #c99700; color: #17150f !important; }
+.teamchoice button.orangeteam.on { background: #e94712; color: #fff !important; text-shadow: 0 1px 0 rgba(0,0,0,.28); }
 .teamroster { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(240px, 1fr); gap: 18px; align-items: start; width: min(760px, 92vw); margin: 4px auto; }
 .teamroster section { border: 3px solid currentColor; border-radius: 10px 14px 9px 12px / 12px 9px 14px 10px; padding: 8px 10px 10px; background: rgba(250,248,238,.78); }
 .teamroster h3, .scoreteam h4 { margin: 0 0 5px; font-size: 27px; letter-spacing: 2px; }
@@ -237,6 +238,8 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .scoreteam div { color: inherit; }
 .scoreteam .me { background: rgba(255,255,255,.65); font-weight: bold; }
 .teamresults .scoreteam { min-width: 260px; }
+.ffaroster { grid-template-columns: minmax(280px, 560px); justify-content: center; }
+.ffaroster section { color: var(--ink); width: 100%; box-sizing: border-box; }
 
 @media (max-width: 760px) {
   .teamroster { grid-template-columns: 1fr; gap: 7px; }

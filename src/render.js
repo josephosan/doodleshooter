@@ -2,7 +2,7 @@
 // full-screen "pen on lined paper" pass draws outlines, hatching, paper grain and ruled lines.
 import * as THREE from 'three';
 
-export const INK = { BLUE: 0, RED: 1, BLACK: 2, ORANGE: 3, GREEN: 4, PINK: 5, YELLOW: 6 };
+export const INK = { BLUE: 0, RED: 1, BLACK: 2, ORANGE: 3, GREEN: 4, PINK: 5, TEAM_ORANGE: 6 };
 export const INK_COLORS = [
   new THREE.Vector3(0.10, 0.19, 0.76), // blue ballpoint
   new THREE.Vector3(0.86, 0.12, 0.20), // red pen
@@ -10,7 +10,7 @@ export const INK_COLORS = [
   new THREE.Vector3(0.92, 0.55, 0.08), // orange highlighter
   new THREE.Vector3(0.12, 0.60, 0.30), // green
   new THREE.Vector3(0.90, 0.40, 0.66), // pink eraser
-  new THREE.Vector3(0.96, 0.72, 0.03), // yellow team
+  new THREE.Vector3(0.98, 0.25, 0.025), // high-contrast team orange
 ];
 export const LIGHT_WORLD = new THREE.Vector3(0.38, 0.82, 0.42).normalize();
 export const shared = { uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uTime: { value: 0 } };

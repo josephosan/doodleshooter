@@ -303,7 +303,7 @@ export class Player {
     if (n.mine && ctx.blastBreakables) ctx.blastBreakables(c, R);
     // me: my own grenade or an enemy grenade; teammate blasts cannot hurt or knock me back
     const d = this.center.distanceTo(c);
-    const hostile = n.mine || !Number.isInteger(n.ownerTeam) || n.ownerTeam !== this.team;
+    const hostile = n.mine || !ctx.teamMode || !ctx.teamMode() || !Number.isInteger(n.ownerTeam) || n.ownerTeam !== this.team;
     if (hostile && this.alive && d < R * 0.95) { this.takeDamage(10 + 34 * (1 - d / (R * 0.95)), c); this.knockback(_v.subVectors(this.center, c).normalize(), 9); }
     // other players in a versus match, decided by the thrower only
     if (n.mine && ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const dd = t.center.distanceTo(c); if (dd < R * 0.95) t.takeDamage(12 + 50 * (1 - dd / (R * 0.95)), c); }

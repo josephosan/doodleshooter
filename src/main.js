@@ -45,6 +45,17 @@ let best = Number(localStorage.getItem('doodle_best') || 0);
 let musicWanted = localStorage.getItem('doodle_music') !== '0';
 let checkpoint = Number(localStorage.getItem('doodle_checkpoint') || 0);
 let myName = (localStorage.getItem('doodle_name') || '').slice(0, 14) || 'doodle' + Math.floor(Math.random() * 90 + 10);
+const FFA_COLORS = [
+  { id: 'blue', name: 'BLUE', ink: INK.BLUE, hex: '#1a30c0' },
+  { id: 'red', name: 'RED', ink: INK.RED, hex: '#d02030' },
+  { id: 'orange', name: 'ORANGE', ink: INK.TEAM_ORANGE, hex: '#e94712' },
+  { id: 'green', name: 'GREEN', ink: INK.GREEN, hex: '#168a45' },
+  { id: 'pink', name: 'PINK', ink: INK.PINK, hex: '#d43b8c' },
+  { id: 'black', name: 'BLACK', ink: INK.BLACK, hex: '#2e3342' },
+];
+const ffaColor = (id) => FFA_COLORS.find((c) => c.id === id) || FFA_COLORS[0];
+const validFfaColor = (id) => FFA_COLORS.some((c) => c.id === id);
+let myColor = validFfaColor(localStorage.getItem('doodle_ffa_color')) ? localStorage.getItem('doodle_ffa_color') : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id;
 const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1' };
 function applySettings() {
   input.mouseSens = 0.0022 * settings.sens / 100; input.padSensX = 3.4 * settings.sens / 100; input.padSensY = 2.6 * settings.sens / 100; input.invertY = settings.invert;
@@ -70,7 +81,7 @@ const online = () => game.mode === 'team' || game.mode === 'ffa';
 const teamMode = () => game.mode === 'team';
 const enemies = ctx.enemies = new EnemyManager(ctx);
 const player = ctx.player = new Player(ctx);
-player.name = myName;
+player.name = myName; player.color = myColor;
 const net = new Net();
 const remote = new Map();      // peer id -> RemotePlayer
 const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null, matchMode: MATCH_TEAMS };
@@ -468,24 +479,26 @@ function endMatch(winner) {
 }
 
 // ---------------- networking ----------------
-function addRemote(id, name, team) {
-  const assigned = validTeam(team) ? team : TEAM_RED, color = teamInk(assigned);
-  if (remote.has(id)) { const r = remote.get(id); r.name = name; r.team = assigned; r.setColor(color); return r; }
-  const rp = new RemotePlayer(ctx, id, name, assigned, color);
+function avatarInk(team, color) { return lobby.matchMode === MATCH_FFA ? ffaColor(color).ink : teamInk(team); }
+function addRemote(id, name, team, color) {
+  const assigned = validTeam(team) ? team : TEAM_RED, picked = validFfaColor(color) ? color : FFA_COLORS[0].id, ink = avatarInk(assigned, picked);
+  if (remote.has(id)) { const r = remote.get(id); r.name = name; r.team = assigned; r.color = picked; r.setColor(ink); return r; }
+  const rp = new RemotePlayer(ctx, id, name, assigned, ink); rp.color = picked;
   rp.onDamage = (t, amount, fromPos) => { if (!ctx.canHurt(t) || !t.alive) return; hud.hitmarker(false, false); net.sendTo(t.id, 'pdmg', { amount: Math.round(amount), from: fromPos ? fromPos.toArray().map((v) => +v.toFixed(1)) : null, by: net.id, src: 'grenade' }); };
   remote.set(id, rp); return rp;
 }
 function removeRemote(id) { const r = remote.get(id); if (r) { r.dispose(); remote.delete(id); } lobby.players.delete(id); scores.delete(id); }
-function lobbyRows() { return [...lobby.players.entries()].map(([id, p]) => ({ id, name: p.name, team: p.team })); }
+function lobbyRows() { return [...lobby.players.entries()].map(([id, p]) => ({ id, name: p.name, team: p.team, color: p.color })); }
 function pickBalancedTeam() {
   const counts = [0, 0]; for (const p of lobby.players.values()) if (validTeam(p.team)) counts[p.team]++;
   return counts[TEAM_RED] === counts[TEAM_ORANGE] ? (Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE) : (counts[TEAM_RED] < counts[TEAM_ORANGE] ? TEAM_RED : TEAM_ORANGE);
 }
 function ensureLobbyTeams() {
   if (!net.isHost || inMatch()) return;
-  for (const [id, p] of lobby.players) if (!validTeam(p.team)) { p.team = pickBalancedTeam(); if (id === net.id) player.team = p.team; else addRemote(id, p.name, p.team); }
+  for (const [id, p] of lobby.players) if (!validTeam(p.team)) { p.team = pickBalancedTeam(); if (id === net.id) player.team = p.team; else addRemote(id, p.name, p.team, p.color); }
 }
-function broadcastLobby() { net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, matchMode: lobby.matchMode, shown: net.aliasCode || net.code }); renderLobby(); }
+function refreshRemoteColors() { for (const [id, p] of lobby.players) if (id !== net.id) addRemote(id, p.name, p.team, p.color); }
+function broadcastLobby() { refreshRemoteColors(); net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, matchMode: lobby.matchMode, shown: net.aliasCode || net.code }); renderLobby(); }
 function setLobbyMode(mode) {
   if (!net.isHost || game.state !== 'lobby' || !validMatchMode(mode)) return false;
   lobby.matchMode = mode; localStorage.setItem('doodle_match_mode', mode); lobby.status = ''; broadcastLobby(); return true;
@@ -493,13 +506,26 @@ function setLobbyMode(mode) {
 function setLobbyTeam(id, team) {
   if (!net.isHost || game.state !== 'lobby' || lobby.matchMode !== MATCH_TEAMS || !validTeam(team)) return false;
   const p = lobby.players.get(id); if (!p) return false;
-  p.team = team; if (id === net.id) player.team = team; else addRemote(id, p.name, team);
+  p.team = team; if (id === net.id) player.team = team; else addRemote(id, p.name, team, p.color);
   lobby.status = ''; broadcastLobby(); return true;
 }
 function chooseTeam(team) {
   if (game.state !== 'lobby' || !validTeam(team)) return;
   if (net.isHost) setLobbyTeam(net.id, team);
   else { lobby.status = 'switching to ' + teamName(team).toLowerCase() + '…'; net.send('teamreq', { team }); renderLobby(); }
+}
+function setLobbyColor(id, color) {
+  if (!net.isHost || game.state !== 'lobby' || lobby.matchMode !== MATCH_FFA || !validFfaColor(color)) return false;
+  const p = lobby.players.get(id); if (!p) return false;
+  p.color = color;
+  if (id === net.id) { myColor = color; player.color = color; localStorage.setItem('doodle_ffa_color', color); }
+  else addRemote(id, p.name, p.team, color);
+  lobby.status = ''; broadcastLobby(); return true;
+}
+function chooseColor(color) {
+  if (game.state !== 'lobby' || lobby.matchMode !== MATCH_FFA || !validFfaColor(color)) return;
+  if (net.isHost) setLobbyColor(net.id, color);
+  else { lobby.status = 'switching to ' + ffaColor(color).name.toLowerCase() + '…'; net.send('colorreq', { color }); renderLobby(); }
 }
 const inMatch = () => ['play', 'dying', 'over'].includes(game.state);
 net.onPeerLeave = (id) => { const nm = (lobby.players.get(id) || {}).name; removeRemote(id); ensureLobbyTeams(); broadcastLobby(); if (inMatch()) { hud.kill((nm || 'someone') + ' left', 0); sendScores(); } };
@@ -520,7 +546,7 @@ async function _migrateHost() {
     let ok = false;
     for (let tries = 0; tries < 2 && !ok; tries++) { try { await net.host({ isPublic: lobby.isPublic, code }); ok = true; } catch (e) { await sleep(800); } }
     if (!ok) { leaveOnline('could not take over the lobby'); return; }
-    const mine = lobby.players.get(myId) || { name: myName, team: validTeam(player.team) ? player.team : pickBalancedTeam() }; player.team = mine.team; lobby.players.delete(myId); lobby.players.set(net.id, mine);
+    const mine = lobby.players.get(myId) || { name: myName, team: validTeam(player.team) ? player.team : pickBalancedTeam(), color: myColor }; player.team = mine.team; myColor = validFfaColor(mine.color) ? mine.color : myColor; mine.color = myColor; player.color = myColor; localStorage.setItem('doodle_ffa_color', myColor); lobby.players.delete(myId); lobby.players.set(net.id, mine);
     const ms = scores.get(myId); scores.delete(myId); if (ms) scores.set(net.id, ms);
     lobby.hostId = net.id; lobby.code = code; lobby.order = [net.id, ...roster.filter((id) => id !== myId)]; net.accepting = true; game.clockStarted = clockRunning || matchLeft < MATCH_TIME;
     net.onAlias = () => { broadcastLobby(); hud.kill('lobby code ' + base + ' is back', 0); }; net.claimAlias(base);
@@ -529,7 +555,7 @@ async function _migrateHost() {
   } else {
     await sleep(1200);
     const deadline = performance.now() + 20000; let joined = false;
-    while (!joined && performance.now() < deadline) { try { await net.join(code, { name: myName, prev: myId, team: player.team }); joined = true; } catch (e) { await sleep(1200); } }
+    while (!joined && performance.now() < deadline) { try { await net.join(code, { name: myName, prev: myId, team: player.team, color: myColor }); joined = true; } catch (e) { await sleep(1200); } }
     if (!joined) { leaveOnline('lost the match when the host left'); return; }
     lobby.code = code; if (!wasInMatch) { game.state = 'lobby'; screen = 'lobby'; showStart(); }
   }
@@ -538,28 +564,30 @@ net.on('refused', (d) => leaveOnline(d.reason));
 net.hostName = myName;
 net.onPeerJoin = (from, meta) => {
   const name = String(meta && meta.name || 'doodle').slice(0, 14);
-  let preservedTeam = null;
+  let preservedTeam = null, preservedColor = null;
   if (meta && meta.prev && meta.prev !== from) {
-    const old = lobby.players.get(meta.prev); if (old && validTeam(old.team)) preservedTeam = old.team;
+    const old = lobby.players.get(meta.prev); if (old && validTeam(old.team)) preservedTeam = old.team; if (old && validFfaColor(old.color)) preservedColor = old.color;
     const sc = scores.get(meta.prev); if (sc) { scores.delete(meta.prev); scores.set(from, sc); }
     const r = remote.get(meta.prev); if (r) r.dispose(); remote.delete(meta.prev); lobby.players.delete(meta.prev); if (lobby.order) lobby.order = lobby.order.filter((id) => id !== meta.prev);
   }
   const team = validTeam(preservedTeam) ? preservedTeam : (meta && meta.prev && validTeam(meta.team) ? meta.team : pickBalancedTeam());
-  lobby.players.set(from, { name, team }); addRemote(from, name, team); ensureLobbyTeams(); broadcastLobby();
-  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, matchMode: lobby.matchMode, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + (teamMode() ? ' joined ' + teamName(team) : ' joined the free for all'), 0); }
+  const color = validFfaColor(preservedColor) ? preservedColor : (meta && validFfaColor(meta.color) ? meta.color : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id);
+  lobby.players.set(from, { name, team, color }); addRemote(from, name, team, color); ensureLobbyTeams(); broadcastLobby();
+  if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, color, matchMode: lobby.matchMode, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + (teamMode() ? ' joined ' + teamName(team) : ' joined the free for all'), 0); }
 };
 net.on('lobby', (d) => {
   lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; lobby.order = d.players.map((p) => p.id); lobby.players.clear();
-  for (const p of d.players) lobby.players.set(p.id, { name: p.name, team: validTeam(p.team) ? p.team : TEAM_RED });
-  const mine = lobby.players.get(net.id); if (mine) { player.team = mine.team; lobby.status = ''; }
-  for (const p of d.players) if (p.id !== net.id) addRemote(p.id, p.name, lobby.players.get(p.id).team);
+  for (const p of d.players) lobby.players.set(p.id, { name: p.name, team: validTeam(p.team) ? p.team : TEAM_RED, color: validFfaColor(p.color) ? p.color : FFA_COLORS[0].id });
+  const mine = lobby.players.get(net.id); if (mine) { player.team = mine.team; myColor = mine.color; player.color = myColor; localStorage.setItem('doodle_ffa_color', myColor); lobby.status = ''; }
+  for (const p of d.players) if (p.id !== net.id) { const rp = lobby.players.get(p.id); addRemote(p.id, p.name, rp.team, rp.color); }
   for (const id of [...remote.keys()]) if (!lobby.players.has(id)) removeRemote(id);
   if (inMatch()) { for (const p of d.players) if (!scores.has(p.id)) scores.set(p.id, { name: p.name, team: lobby.players.get(p.id).team, kills: 0, deaths: 0 }); refreshScoreHud(); }
   renderLobby();
 });
 net.on('teamreq', (d, from) => { if (net.isHost) setLobbyTeam(from, Number(d && d.team)); });
+net.on('colorreq', (d, from) => { if (net.isHost) setLobbyColor(from, String(d && d.color || '')); });
 net.on('leave', (d) => { const nm = (lobby.players.get(d.id) || {}).name; removeRemote(d.id); if (inMatch()) hud.kill((nm || 'someone') + ' left', 0); renderLobby(); });
-net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; const assigned = d.teams && d.teams[net.id]; if (validTeam(d.team)) player.team = d.team; else if (validTeam(assigned)) player.team = assigned; startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn, lobby.matchMode); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
+net.on('start', (d) => { if (net.isHost) return; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; const assigned = d.teams && d.teams[net.id], assignedColor = d.colors && d.colors[net.id]; if (validTeam(d.team)) player.team = d.team; else if (validTeam(assigned)) player.team = assigned; if (validFfaColor(d.color)) myColor = d.color; else if (validFfaColor(assignedColor)) myColor = assignedColor; player.color = myColor; startMatch(!!d.late, d.spawns ? d.spawns[net.id] : d.spawn, lobby.matchMode); if (d.broken) for (const id of d.broken) { const br = level.breakables[id]; if (br) breakProp(br, null, false, true); } });
 net.on('end', (d) => endMatch(d));
 net.on('backtolobby', () => { if (!net.isHost) toLobbyScreen(); });
 net.on('pickup', (d) => { if (!net.isHost) spawnPickup(d.kind, new THREE.Vector3().fromArray(d.pos), d.id); });
@@ -645,16 +673,16 @@ async function createLobby(isPublic) {
   setStatus('opening a lobby…');
   try { await net.host({ isPublic }); }
   catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
-  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.matchMode = validMatchMode(localStorage.getItem('doodle_match_mode')) ? localStorage.getItem('doodle_match_mode') : MATCH_TEAMS; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE; lobby.players.set(net.id, { name: myName, team: player.team }); lobby.hostId = net.id; lobby.status = '';
+  lobby.isPublic = isPublic; lobby.map = mapKey; lobby.matchMode = validMatchMode(localStorage.getItem('doodle_match_mode')) ? localStorage.getItem('doodle_match_mode') : MATCH_TEAMS; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE; player.color = myColor; lobby.players.set(net.id, { name: myName, team: player.team, color: myColor }); lobby.hostId = net.id; lobby.status = '';
   game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function joinLobby(code) {
   setStatus('connecting…');
-  try { await net.join(code, { name: myName }); } catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
+  try { await net.join(code, { name: myName, color: myColor }); } catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
   lobby.isPublic = net.isPublic; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function quickPlay() {
-  try { await net.quickJoin({ name: myName }, setStatus); lobby.isPublic = true; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart(); return; }
+  try { await net.quickJoin({ name: myName, color: myColor }, setStatus); lobby.isPublic = true; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart(); return; }
   catch (err) { if (!/no open public/.test(String(err.message))) { setStatus(friendlyError(err)); unlockButtons(); return; } }
   setStatus('no open lobbies · opening a public one for you…');
   await createLobby(true);
@@ -725,8 +753,8 @@ function onlineHTML() {
 function lobbyHTML() {
   const rows = lobbyRows(); const host = net.isHost; const n = rows.length;
   const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
-  const ffaList = rows.map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
-  const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team;
+  const ffaList = rows.map((p) => `<div class="ffaplayer ${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}" style="--player-color:${ffaColor(p.color).hex}"><span>${esc(p.name)}</span><span>${ffaColor(p.color).name}${p.id === net.id ? ' · you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team, mineColor = mine && validFfaColor(mine.color) ? mine.color : myColor;
   const teams = lobby.matchMode === MATCH_TEAMS;
   return `<h1>LOBBY</h1><h2>${teams ? 'choose your team · first team' : 'free for all · first player'} to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
     <div class="online" id="online">
@@ -736,7 +764,7 @@ function lobbyHTML() {
       <div class="modes" role="group" aria-label="Match mode"><button type="button" class="modebtn${lobby.matchMode === MATCH_FFA ? ' on' : ''}" data-match-mode="${MATCH_FFA}" ${host ? '' : 'disabled'}>FREE FOR ALL<i>everyone can fight everyone</i></button><button type="button" class="modebtn${teams ? ' on' : ''}" data-match-mode="${MATCH_TEAMS}" ${host ? '' : 'disabled'}>TEAMS<i>red vs orange · no friendly fire</i></button></div>
       <div class="hint">${host ? 'host chooses the match mode' : `host selected ${teams ? 'red vs orange teams' : 'free for all'}`}</div>
       ${teams ? `<div class="teamchoice" role="group" aria-label="Choose your team"><span>your team</span><button type="button" class="redteam${myTeam === TEAM_RED ? ' on' : ''}" data-team="${TEAM_RED}" aria-pressed="${myTeam === TEAM_RED}">RED TEAM</button><button type="button" class="orangeteam${myTeam === TEAM_ORANGE ? ' on' : ''}" data-team="${TEAM_ORANGE}" aria-pressed="${myTeam === TEAM_ORANGE}">ORANGE TEAM</button></div>
-      <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="orangeteam"><h3>ORANGE TEAM</h3><div class="plist">${teamList(TEAM_ORANGE)}</div></section></div>` : `<div class="teamroster ffaroster"><section><h3>EVERY PLAYER IS AN ENEMY</h3><div class="plist">${ffaList}</div></section></div>`}
+      <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="orangeteam"><h3>ORANGE TEAM</h3><div class="plist">${teamList(TEAM_ORANGE)}</div></section></div>` : `<div class="ffacolors" role="group" aria-label="Choose your FFA color"><span>your color</span>${FFA_COLORS.map((c) => `<button type="button" class="colorbtn${mineColor === c.id ? ' on' : ''}" data-color="${c.id}" style="--swatch:${c.hex}" aria-pressed="${mineColor === c.id}">${c.name}</button>`).join('')}</div><div class="teamroster ffaroster"><section><h3>EVERY PLAYER IS AN ENEMY</h3><div class="plist">${ffaList}</div></section></div>`}
       <div class="row">${host ? '<button type="button" class="big" id="startBtn">START MATCH</button>' : '<span class="hint">waiting for the host to start the match…</span>'}<button type="button" class="alt" id="leaveBtn">LEAVE</button></div>
       <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">${teams ? 'choose or switch teams before the match starts · new players receive a balanced default' : 'every player can damage every other player'}</div>
     </div>`;
@@ -765,6 +793,7 @@ function wireOnline() {
   if (q('refreshBtn')) { q('refreshBtn').addEventListener('click', () => refreshLobbies()); if (!lobbyList && !listBusy) refreshLobbies(); }
   if (q('lobbyRows')) q('lobbyRows').addEventListener('click', (e) => { const b = e.target.closest('button[data-join]'); if (b) { lockButtons(box); joinLobby(b.dataset.join); } });
   const teamChoice = box.querySelector('.teamchoice'); if (teamChoice) teamChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-team]'); if (b) chooseTeam(Number(b.dataset.team)); });
+  const colorChoice = box.querySelector('.ffacolors'); if (colorChoice) colorChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-color]'); if (b) chooseColor(b.dataset.color); });
   const modeChoice = box.querySelector('.modes'); if (modeChoice) modeChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-match-mode]'); if (b && !b.disabled) setLobbyMode(b.dataset.matchMode); });
   wireMap((k) => { if (net.isHost) { lobby.map = k; broadcastLobby(); } });
   if (q('startBtn')) q('startBtn').addEventListener('click', () => hostStart());
@@ -831,8 +860,8 @@ function hostStart() {
   } else {
     const open = shuffle([...ordered]); let i = 0; for (const id of lobby.players.keys()) spawns[id] = open[i++ % Math.max(1, open.length)] ?? ordered[0];
   }
-  const teams = {}; for (const [id, p] of lobby.players) teams[id] = p.team;
-  net.send('start', { spawns, teams, matchMode: lobby.matchMode, map: lobby.map || mapKey }); startMatch(false, spawns[net.id], lobby.matchMode); sendScores();
+  const teams = {}, colors = {}; for (const [id, p] of lobby.players) { teams[id] = p.team; colors[id] = p.color; }
+  net.send('start', { spawns, teams, colors, matchMode: lobby.matchMode, map: lobby.map || mapKey }); startMatch(false, spawns[net.id], lobby.matchMode); sendScores();
 }
 function startMatch(late, spawnIdx, matchMode = lobby.matchMode) {
   lobby.matchMode = validMatchMode(matchMode) ? matchMode : MATCH_TEAMS; net.inMatch = true; game.mode = lobby.matchMode === MATCH_FFA ? 'ffa' : 'team'; setArena(true); resetGame(); matchLeft = MATCH_TIME; clockT = 0; game.clockStarted = false;

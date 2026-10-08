@@ -240,6 +240,15 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .teamresults .scoreteam { min-width: 260px; }
 .ffaroster { grid-template-columns: minmax(280px, 560px); justify-content: center; }
 .ffaroster section { color: var(--ink); width: 100%; box-sizing: border-box; }
+.ffacolors { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; width: min(760px, 92vw); margin: 5px auto 8px; }
+.ffacolors > span { width: 100%; font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+.colorbtn { --swatch: var(--ink); font: inherit; font-size: 17px; color: var(--swatch); background: rgba(250,248,238,.85); border: 2.5px solid var(--swatch); border-radius: 7px 10px 6px 9px / 10px 6px 9px 7px; padding: 4px 10px; cursor: pointer; min-width: 92px; }
+.online .colorbtn { color: var(--swatch); border-color: var(--swatch); }
+.colorbtn::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 6px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 0 1px rgba(255,255,255,.85), 0 0 0 2px var(--swatch); }
+.online .colorbtn.on { color: #fff; background: var(--swatch); border-color: var(--swatch); box-shadow: 3px 4px 0 rgba(26,48,192,.22); transform: translate(-1px,-1px) rotate(-.4deg); }
+.colorbtn.on::before { background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+.ffaplayer span:first-child { color: var(--player-color); font-weight: bold; }
+.ffaplayer span:last-child { color: var(--player-color); font-size: 16px; }
 
 @media (max-width: 760px) {
   .teamroster { grid-template-columns: 1fr; gap: 7px; }

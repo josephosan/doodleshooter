@@ -481,18 +481,20 @@ function checkWin() {
 }
 const newMatchId = () => crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, (c) => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
 function resultForMe(winner) {
+  if (winner.left) return 'loss';
   if (winner.draw) return 'draw';
   if (teamMode()) return winner.team === player.team ? 'win' : 'loss';
   return winner.id === net.id ? 'win' : 'loss';
 }
 async function recordMatchResult(winner) {
-  if (!account.user || !game.matchId || game.statsSubmittedFor === game.matchId) return;
+  if (!account.user || !game.matchId || game.statsSubmittedFor === game.matchId) return true;
   const matchId = game.matchId, row = scores.get(net.id), kills = Math.max(0, game.kills | 0), deaths = Math.max(0, row ? row.deaths | 0 : 0);
   const payload = { mode: teamMode() ? 'teams' : 'ffa', mapKey: loadedKey, durationSeconds: Math.min(7200, Math.max(0, Math.round((Date.now() - game.matchStartedAt) / 1000))), kills, deaths, headshots: Math.min(kills, Math.max(0, game.headshots | 0)), result: resultForMe(winner), team: teamMode() ? (player.team === TEAM_RED ? 'red' : 'black') : null, color: myColor };
   game.statsSubmittedFor = matchId; game.statsStatus = 'saving stats…'; const out = document.getElementById('matchSave'); if (out) out.textContent = game.statsStatus;
   try { const response = await submitResult(matchId, payload); syncAccountUser(); game.statsStatus = response && response.recorded ? 'stats recorded ✓' : 'stats already recorded ✓'; }
   catch (error) { game.statsSubmittedFor = null; game.statsStatus = 'stats could not be saved · ' + (error.message || String(error)); }
   const status = document.getElementById('matchSave'); if (status) status.textContent = game.statsStatus;
+  return game.statsSubmittedFor === matchId;
 }
 function endMatch(winner) {
   game.over = winner; game.overT = 0; game.state = 'over'; endFocus(); input.exitLock(); hud.setBoard(null);
@@ -695,6 +697,21 @@ function leaveOnline(reason) {
   if (game.state !== 'start') { game.state = 'start'; game.mode = 'solo'; setArena(false); resetGame(); hud.setGameplayVisible(false); }
   game.menu = false; lobby.status = reason || ''; screen = 'online'; showStart();
 }
+let manualLeavePending = false;
+async function leaveOnlineManually(button) {
+  if (manualLeavePending) return;
+  manualLeavePending = true;
+  const saveOnlineResult = online() && inMatch() && !game.over && !!account.user && !!game.matchId;
+  if (button) { button.disabled = true; button.textContent = saveOnlineResult ? 'SAVING STATS…' : 'LEAVING…'; }
+  let saved = true;
+  if (saveOnlineResult) {
+    saved = await recordMatchResult({ left: true });
+    if (!saved) { await sleep(400); saved = await recordMatchResult({ left: true }); }
+  }
+  lobby.rejoinCode = null;
+  leaveOnline(!saved ? 'left match · online stats could not be saved' : saveOnlineResult ? 'left match · online stats saved' : '');
+  manualLeavePending = false;
+}
 async function createLobby(isPublic) {
   setStatus('opening a lobby…');
   try { await net.host({ isPublic }); }
@@ -887,7 +904,7 @@ function wireOnline() {
   const modeChoice = box.querySelector('.modes'); if (modeChoice) modeChoice.addEventListener('click', (e) => { const b = e.target.closest('button[data-match-mode]'); if (b && !b.disabled) setLobbyMode(b.dataset.matchMode); });
   wireMap((k) => { if (net.isHost) { lobby.map = k; broadcastLobby(); } });
   if (q('startBtn')) q('startBtn').addEventListener('click', () => hostStart());
-  if (q('leaveBtn')) q('leaveBtn').addEventListener('click', () => { lobby.rejoinCode = null; leaveOnline(''); });
+  if (q('leaveBtn')) q('leaveBtn').addEventListener('click', (e) => leaveOnlineManually(e.currentTarget));
 }
 function lockButtons(box) { for (const b of box.querySelectorAll('button')) if (b.id !== 'backBtn') b.disabled = true; }
 function unlockButtons() { const box = hud.el.panel.querySelector('#online'); if (box) for (const b of box.querySelectorAll('button')) b.disabled = false; }
@@ -969,7 +986,7 @@ function startMatch(late, spawnIdx, matchMode = lobby.matchMode, matchId = null)
 }
 function pause() { if ((game.state !== 'play' && !(game.state === 'dying' && online())) || game.menu) return; if (!online()) game.state = 'pause'; game.menu = true; showPause(); audio.reelLoop(false); }
 function resume() { if (online()) { game.menu = false; if (game.state === 'dying' && game.respawnT <= 0) game.respawnArm = input.lastActive; hud.hideScreen(); hud.setGameplayVisible(true); if (!input.usingGamepad) input.requestLock(); return; } begin(); }
-Object.assign(window.__game, { startWave, updateWaves, begin, beginAtWave, jumpToWave, resetGame, spawnPickup, focusCandidate, enterFocus, pickSpawn, startMatch, createLobby, joinLobby, quickPlay, leaveOnline, hostStart });
+Object.assign(window.__game, { startWave, updateWaves, begin, beginAtWave, jumpToWave, resetGame, spawnPickup, focusCandidate, enterFocus, pickSpawn, startMatch, createLobby, joinLobby, quickPlay, leaveOnline, leaveOnlineManually, recordMatchResult, hostStart });
 hud.onScreenClick = () => {
   const st = game.state;
   if (st === 'over') { if (net.isHost) { net.send('backtolobby', {}); toLobbyScreen(); } return; }

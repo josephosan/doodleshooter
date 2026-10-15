@@ -32,14 +32,15 @@ export class Effects {
   constructor(scene, world) {
     this.scene = scene; this.world = world;
     this.drops = this._pool(new THREE.IcosahedronGeometry(0.5, 1), 700);
+    this.smokeDrops = this._pool(new THREE.IcosahedronGeometry(0.5, 1), 220, false, { opacity: 0.38 });
     this.strokes = this._pool(new THREE.BoxGeometry(1, 1, 1), 600);
     this.splats = [0, 1, 2, 3, 4].map((i) => this._pool(splatGeometry(i), 300, true));
     this.holes = this._pool(new THREE.CircleGeometry(0.5, 8), 260, true);
     this.particles = []; this.debrisList = []; this.growing = []; this.shakeAmt = 0;
     this.gibsAlive = 0;
   }
-  _pool(geo, max, double = false) {
-    const mat = makeInkMaterial({ ink: INK.RED, fill: true, side: double ? THREE.DoubleSide : THREE.FrontSide });
+  _pool(geo, max, double = false, materialOpts = {}) {
+    const mat = makeInkMaterial({ ink: INK.RED, fill: true, side: double ? THREE.DoubleSide : THREE.FrontSide, ...materialOpts });
     const mesh = new THREE.InstancedMesh(geo, mat, max);
     mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -54,7 +55,7 @@ export class Effects {
   clear() {
     this.particles.length = 0; this.growing.length = 0;
     for (const d of this.debrisList) this.scene.remove(d.mesh); this.debrisList.length = 0;
-    for (const p of [this.drops, this.strokes, this.holes, ...this.splats]) { p.next = 0; p.used = 0; p.mesh.count = 0; }
+    for (const p of [this.drops, this.smokeDrops, this.strokes, this.holes, ...this.splats]) { p.next = 0; p.used = 0; p.mesh.count = 0; }
   }
 
   // ---------- decals ----------
@@ -207,8 +208,9 @@ export class Effects {
   // ejected casing: a small tumbling stroke
   shell(pos, vel, ink = INK.ORANGE, size = 0.02) { this._spawn('stroke', pos, vel, { size, life: rand(0.9, 1.4), ink, gravity: 22, stretch: 0.012, collide: null, shrink: false, len: 0, drag: 0.5 }); }
   // doodle smoke: outlined circles that rise and grow
-  smoke(pos, dir, n = 3) {
-    for (let i = 0; i < n; i++) { _v.copy(dir).multiplyScalar(rand(0.6, 1.8)).add(_v2.set(rand(-0.5, 0.5), rand(0.6, 1.4), rand(-0.5, 0.5))); this._spawn('drop', pos, _v, { size: rand(0.04, 0.07), life: rand(0.45, 0.8), ink: INK.BLUE, fill: false, gravity: -1.2, drag: 3, collide: null, grow: 3.2, shrink: false }); }
+  smoke(pos, dir, n = 3, opts = {}) {
+    const scale = opts.scale ?? 1, lifeScale = opts.lifeScale ?? 1, kind = opts.transparent ? 'smoke' : 'drop';
+    for (let i = 0; i < n; i++) { _v.copy(dir).multiplyScalar(rand(0.6, 1.8)).add(_v2.set(rand(-0.5, 0.5), rand(0.6, 1.4), rand(-0.5, 0.5))); this._spawn(kind, pos, _v, { size: rand(0.04, 0.07) * scale, life: rand(0.45, 0.8) * lifeScale, ink: INK.BLUE, fill: false, gravity: -1.2, drag: 3, collide: null, grow: opts.grow ?? 3.2, shrink: false }); }
   }
   // ink explosion: burst of drops + strokes, a big decal on the ground and shake
   explosion(pos, radius = 4, ink = INK.BLACK) {
@@ -296,13 +298,15 @@ export class Effects {
     this._flush();
   }
   _flush() {
-    let di = 0, si = 0; const drops = this.drops, strokes = this.strokes;
+    let di = 0, mi = 0, si = 0; const drops = this.drops, smokeDrops = this.smokeDrops, strokes = this.strokes;
     for (const p of this.particles) {
       const frac = p.life / p.maxLife;
-      if (p.kind === 'drop') {
-        if (di >= drops.max) continue;
+      if (p.kind === 'drop' || p.kind === 'smoke') {
+        const pool = p.kind === 'smoke' ? smokeDrops : drops; let i = p.kind === 'smoke' ? mi : di;
+        if (i >= pool.max) continue;
         const s = p.size * (p.grow ? lerp(1, p.grow, 1 - frac) : p.shrink ? 0.4 + 0.6 * frac : 1); _s.set(s, s, s); _q.identity();
-        this._write(drops, di++, p.pos, _q, _s, p.ink, p.fill);
+        this._write(pool, i++, p.pos, _q, _s, p.ink, p.fill);
+        if (p.kind === 'smoke') mi = i; else di = i;
       } else if (p.kind === 'stroke') {
         if (si >= strokes.max) continue;
         let len;
@@ -312,8 +316,9 @@ export class Effects {
         this._write(strokes, si++, p.pos, _q, _s, p.ink, p.fill);
       }
     }
-    drops.mesh.count = di; strokes.mesh.count = si;
+    drops.mesh.count = di; smokeDrops.mesh.count = mi; strokes.mesh.count = si;
     drops.mesh.instanceMatrix.needsUpdate = true; drops.mesh.instanceColor.needsUpdate = true;
+    smokeDrops.mesh.instanceMatrix.needsUpdate = true; smokeDrops.mesh.instanceColor.needsUpdate = true;
     strokes.mesh.instanceMatrix.needsUpdate = true; strokes.mesh.instanceColor.needsUpdate = true;
   }
 }

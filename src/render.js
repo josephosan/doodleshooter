@@ -42,10 +42,15 @@ uniform float uInk;
 uniform float uFill;
 uniform float uShadeScale;
 uniform float uShadeBias;
+uniform float uOpacity;
 uniform vec3 uLightDir;
 varying vec3 vNormalV;
 varying vec4 vColorData;
 void main() {
+  // Screen-door transparency keeps translucent ink compatible with the packed
+  // shade/ink/normal buffer while still revealing geometry behind smoke.
+  float dither = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
+  if (dither > uOpacity) discard;
   vec3 n = normalize(vNormalV);
   if (!gl_FrontFacing) n = -n;
   float ndl = dot(n, uLightDir) * 0.5 + 0.5;
@@ -61,6 +66,7 @@ export function makeInkMaterial(opts = {}) {
     uniforms: {
       uInk: { value: opts.ink ?? INK.BLUE }, uFill: { value: opts.fill ? 1 : 0 },
       uShadeScale: { value: opts.shadeScale ?? 1.0 }, uShadeBias: { value: opts.shadeBias ?? 0.0 },
+      uOpacity: { value: opts.opacity ?? 1.0 },
       uLightDir: shared.uLightDir, uTime: shared.uTime,
     },
     vertexShader: inkVert, fragmentShader: inkFrag, side: opts.side ?? THREE.FrontSide,

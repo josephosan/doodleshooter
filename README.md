@@ -52,7 +52,7 @@ On-screen hints follow whichever device you touched last.
 
 Rifle, Desert Eagle, sniper (with scope), limited-ammo RPG and a katana. The Settings loadout editor
 lets each player enable or disable guns and reorder their active number slots. RPG rockets use splash
-damage, can hurt their owner at close range, and start with one loaded plus two reserve. Holding block with the katana parries
+damage, can hurt their owner at close range, and start with one loaded plus four reserve (five total). Holding block with the katana parries
 some incoming bullets and returns a share of them. Katana kills charge a gauge; when it is lit you
 can dash to a marked enemy and execute it (solo only). Grenades bounce, then go off in a thick orange blast that scorches the paper; holding the
 button winds up a longer throw and shows the arc. The grapple runs on breath: hanging drains it,

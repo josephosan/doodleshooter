@@ -614,7 +614,7 @@ net.onPeerJoin = (from, meta) => {
   const team = validTeam(preservedTeam) ? preservedTeam : (meta && meta.prev && validTeam(meta.team) ? meta.team : pickBalancedTeam());
   const color = validFfaColor(preservedColor) ? preservedColor : (meta && validFfaColor(meta.color) ? meta.color : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id);
   const accountId = meta && typeof meta.accountId === 'string' ? meta.accountId.slice(0, 36) : null;
-  const badge = meta && Number.isInteger(meta.badge) && meta.badge >= 100 ? Math.floor(meta.badge / 100) * 100 : 0;
+  const claimedBadge = badgeTier(meta && meta.badge), badge = claimedBadge ? claimedBadge.level : 0;
   lobby.players.set(from, { name, team, color, accountId, badge }); addRemote(from, name, team, color); ensureLobbyTeams(); broadcastLobby();
   if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, color, matchId: game.matchId, matchMode: lobby.matchMode, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + (teamMode() ? ' joined ' + teamName(team) : ' joined the free for all'), 0); }
 };
@@ -808,7 +808,15 @@ const mapName = (k) => (LEVELS.find((m) => m.key === k) || LEVELS[0]).name;
 function mapHTML(sel, canPick) { if (LEVELS.length < 2) return ''; return `<div class="mapsel" id="mapsel"><span>map</span>${LEVELS.map((m) => `<button type="button" class="mapbtn${m.key === sel ? ' on' : ''}" data-map="${m.key}" ${canPick ? '' : 'disabled'}>${m.name}<i>${m.blurb}</i></button>`).join('')}</div>`; }
 function wireMap(onPick) { const box = hud.el.panel.querySelector('#mapsel'); if (!box) return; box.addEventListener('click', (e) => { e.stopPropagation(); const b = e.target.closest('.mapbtn'); if (b && !b.disabled) onPick(b.dataset.map); }); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const badgeHTML = (badge) => badge && badge.level ? `<span class="userbadge">★ ${badge.level}</span>` : '';
+const BADGE_TIERS = [
+  [100, 'dolche'], [500, 'dolack'], [1000, 'sardolche'], [2500, 'sardol'],
+  [3700, 'dolbor'], [7000, 'superdol'], [10000, 'superdolplus'], [20000, 'ultradolgod'],
+];
+const badgeTier = (level) => { const n = Number(level || 0); for (let i = BADGE_TIERS.length - 1; i >= 0; i--) if (n >= BADGE_TIERS[i][0]) return { level: BADGE_TIERS[i][0], label: BADGE_TIERS[i][1] }; return null; };
+const badgeHTML = (badge) => {
+  const resolved = badge && typeof badge === 'object' && badge.label ? badge : badgeTier(badge && typeof badge === 'object' ? badge.level : badge);
+  return resolved ? `<span class="userbadge" title="${resolved.level}+ online kills">★ ${esc(resolved.label)}</span>` : '';
+};
 const accountBadge = () => account.user && account.user.badge ? badgeHTML(account.user.badge) : '';
 let accountGames = null, accountGamesBusy = false;
 let boardScope = 'weekly', boardData = null, boardBusy = false, boardError = '';
@@ -894,8 +902,8 @@ function onlineHTML() {
 }
 function lobbyHTML() {
   const rows = lobbyRows(); const host = net.isHost; const n = rows.length;
-  const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)} ${badgeHTML(p.badge ? { level: p.badge } : null)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
-  const ffaList = rows.map((p) => `<div class="ffaplayer ${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}" style="--player-color:${ffaColor(p.color).hex}"><span>${esc(p.name)} ${badgeHTML(p.badge ? { level: p.badge } : null)}</span><span>${ffaColor(p.color).name}${p.id === net.id ? ' · you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)} ${badgeHTML(p.badge)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const ffaList = rows.map((p) => `<div class="ffaplayer ${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}" style="--player-color:${ffaColor(p.color).hex}"><span>${esc(p.name)} ${badgeHTML(p.badge)}</span><span>${ffaColor(p.color).name}${p.id === net.id ? ' · you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
   const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team, mineColor = mine && validFfaColor(mine.color) ? mine.color : myColor;
   const teams = lobby.matchMode === MATCH_TEAMS;
   return `<h1>LOBBY</h1><h2>${teams ? 'choose your team · first team' : 'free for all · first player'} to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>

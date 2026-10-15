@@ -11,11 +11,20 @@ test('usernames match the multiplayer display limit', () => {
   assert.equal(validate.username('bad name'), null);
 });
 
-test('kill badges advance every 100 kills', () => {
+test('kill badges use the named all-time thresholds', () => {
   assert.equal(badgeFor(99), null);
-  assert.deepEqual(badgeFor(100), { level: 100, label: '100 KILLS' });
-  assert.deepEqual(badgeFor(299), { level: 200, label: '200 KILLS' });
-  assert.deepEqual(badgeFor(300), { level: 300, label: '300 KILLS' });
+  assert.deepEqual(badgeFor(100), { level: 100, label: 'dolche' });
+  assert.deepEqual(badgeFor(499), { level: 100, label: 'dolche' });
+  assert.deepEqual(badgeFor(500), { level: 500, label: 'dolack' });
+  assert.deepEqual(badgeFor(999), { level: 500, label: 'dolack' });
+  assert.deepEqual(badgeFor(1000), { level: 1000, label: 'sardolche' });
+  assert.deepEqual(badgeFor(2500), { level: 2500, label: 'sardol' });
+  assert.deepEqual(badgeFor(3700), { level: 3700, label: 'dolbor' });
+  assert.deepEqual(badgeFor(7000), { level: 7000, label: 'superdol' });
+  assert.deepEqual(badgeFor(10000), { level: 10000, label: 'superdolplus' });
+  assert.deepEqual(badgeFor(19999), { level: 10000, label: 'superdolplus' });
+  assert.deepEqual(badgeFor(20000), { level: 20000, label: 'ultradolgod' });
+  assert.deepEqual(badgeFor(999999), { level: 20000, label: 'ultradolgod' });
 });
 
 test('passwords are salted, verifiable, and session tokens are not stored raw', async () => {

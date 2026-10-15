@@ -70,10 +70,11 @@ function authBody(body: unknown): { username: string; password: string } | null 
 function leaderboardRows(rows: Array<Record<string, unknown>>) {
   return rows.map((row, index) => {
     const kills = number(row.kills as string | number);
+    const badgeKills = number((row.badge_kills ?? row.kills) as string | number);
     return {
       rank: index + 1, id: row.id, username: row.username, color: row.color,
       kills, deaths: number(row.deaths as string | number), headshots: number(row.headshots as string | number),
-      gamesPlayed: number(row.games_played as string | number), wins: number(row.wins as string | number), badge: badgeFor(kills),
+      gamesPlayed: number(row.games_played as string | number), wins: number(row.wins as string | number), badge: badgeFor(badgeKills),
     };
   });
 }
@@ -166,12 +167,12 @@ export async function buildApp() {
         ORDER BY s.kills DESC, s.headshots DESC, s.deaths ASC, u.created_at ASC LIMIT 10`);
       return reply.send({ scope, rows: leaderboardRows(result.rows), resetAt: null });
     }
-    const result = await pool.query(`SELECT u.id, u.username, u.color, count(*)::int AS games_played,
+    const result = await pool.query(`SELECT u.id, u.username, u.color, s.kills AS badge_kills, count(*)::int AS games_played,
       count(*) FILTER (WHERE gp.result = 'win')::int AS wins,
       sum(gp.kills)::bigint AS kills, sum(gp.deaths)::bigint AS deaths, sum(gp.headshots)::bigint AS headshots
-      FROM game_players gp JOIN games g ON g.id = gp.game_id JOIN users u ON u.id = gp.user_id
+      FROM game_players gp JOIN games g ON g.id = gp.game_id JOIN users u ON u.id = gp.user_id JOIN user_stats s ON s.user_id = u.id
       WHERE g.ended_at >= date_trunc('week', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-      GROUP BY u.id, u.username, u.color, u.created_at
+      GROUP BY u.id, u.username, u.color, u.created_at, s.kills
       ORDER BY kills DESC, headshots DESC, deaths ASC, u.created_at ASC LIMIT 10`);
     const reset = await pool.query<{ reset_at: string }>(`SELECT (date_trunc('week', now() AT TIME ZONE 'UTC') + interval '1 week') AT TIME ZONE 'UTC' AS reset_at`);
     return reply.send({ scope, rows: leaderboardRows(result.rows), resetAt: reset.rows[0]?.reset_at || null });

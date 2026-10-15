@@ -22,6 +22,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+      network: host
     image: doodleshooter-api:latest
     container_name: doodleshooter_api
     restart: unless-stopped

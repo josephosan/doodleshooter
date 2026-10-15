@@ -27,6 +27,19 @@ export async function changeUsername(username) { return acceptUser(await request
 export async function saveColor(color) { return acceptUser(await request('/api/account/color', { method: 'PUT', body: JSON.stringify({ color }) })); }
 export async function leaderboard(scope) { return request('/api/leaderboards/' + (scope === 'weekly' ? 'weekly' : 'all-time')); }
 export async function recentGames() { return request('/api/me/games'); }
+export async function recentSoloRuns() { return request('/api/me/solo-runs'); }
+export async function publicProfile(username) { return request('/api/profiles/' + encodeURIComponent(username)); }
+export async function searchPlayers(query) { return request('/api/players/search?q=' + encodeURIComponent(query)); }
+export async function duelRequests() { return request('/api/duels'); }
+export async function requestDuel(username) { return request('/api/duels', { method: 'POST', body: JSON.stringify({ username }) }); }
+export async function respondDuel(id, action) { return request('/api/duels/' + encodeURIComponent(id) + '/respond', { method: 'POST', body: JSON.stringify({ action }) }); }
+export async function cancelDuel(id) { return request('/api/duels/' + encodeURIComponent(id), { method: 'DELETE' }); }
+export async function submitSoloRun(runId, result) {
+  if (!account.user || !runId) return null;
+  const response = await request('/api/solo-runs/' + encodeURIComponent(runId), { method: 'POST', body: JSON.stringify(result) });
+  if (response.user) account.user = response.user;
+  return response;
+}
 export async function submitResult(gameId, result) {
   if (!account.user || !gameId) return null;
   const response = await request('/api/games/' + encodeURIComponent(gameId) + '/results', { method: 'POST', body: JSON.stringify(result) });

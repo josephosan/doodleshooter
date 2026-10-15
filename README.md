@@ -28,6 +28,10 @@ server. Under PLAY ONLINE you can Quick Play (joins an open public lobby, or ope
 create a public or private lobby, or join a friend's lobby with their five letter code. People can
 join a match already in progress. The host's browser keeps score; each player runs their own body.
 
+Signed-in players also get private offline-run totals that never affect badges or leaderboards.
+The Players & Duels screen provides username search, public online profiles, and expiring duel
+requests. Accepting a duel opens a reserved two-player private FFA lobby for the two accounts.
+
 ## Controls
 
 | Action | Mouse + keyboard | PS5 controller |

@@ -18,6 +18,8 @@ export function uuid(value: unknown): string | null { return typeof value === 's
 export function mapKey(value: unknown): string | null { return typeof value === 'string' && MAP_KEY.test(value) ? value : null; }
 export function mode(value: unknown): MatchMode | null { return value === 'ffa' || value === 'teams' ? value : null; }
 export function result(value: unknown): MatchResult | null { return value === 'win' || value === 'loss' || value === 'draw' ? value : null; }
+export function soloEndReason(value: unknown): 'death' | 'left' | null { return value === 'death' || value === 'left' ? value : null; }
+export function duelAction(value: unknown): 'accept' | 'decline' | null { return value === 'accept' || value === 'decline' ? value : null; }
 export function integer(value: unknown, min: number, max: number): number | null {
   return Number.isInteger(value) && Number(value) >= min && Number(value) <= max ? Number(value) : null;
 }

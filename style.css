@@ -309,6 +309,19 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .leaderrow.top3 { background: rgba(166,93,49,.11); }
 .loadingline, .matchsave { font-size: 22px; color: var(--red); min-height: 28px; }
 .matchsave { margin-top: 12px; }
+.solostats { grid-template-columns: repeat(6, minmax(82px, 1fr)); }
+.profilelink { font: inherit; font-weight: bold; color: inherit; background: none; border: 0; border-bottom: 2px dashed currentColor; padding: 0; cursor: pointer; }
+.leadername .profilelink, .publicname { color: var(--player-color); }
+.playerhub section { padding: 10px 14px; border: 2px dashed rgba(26,48,192,.45); border-radius: 10px 14px 9px 12px; }
+.playerhub input { box-sizing: border-box; width: min(320px, 100%); font: inherit; color: var(--ink); background: rgba(255,255,255,.45); border: 2px solid var(--ink); border-radius: 6px 9px 6px 8px; padding: 5px 9px; }
+.playerresults { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.playerresult, .duelrow { display: grid; grid-template-columns: minmax(150px, 1fr) auto auto auto; gap: 10px; align-items: center; padding: 7px 10px; text-align: left; border-left: 7px solid var(--player-color); border-bottom: 1.5px solid rgba(26,48,192,.22); }
+.duelrow { grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto; }
+.duelrow > div { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.duelrow button, .playerresult button { font-size: 17px; padding: 3px 10px; }
+.duelrow .profilelink, .playerresult .profilelink { color: var(--player-color); padding: 0; }
+.duelcount { display: inline-grid; min-width: 22px; height: 22px; place-items: center; color: white; background: var(--red); border-radius: 50%; font-size: 15px; vertical-align: middle; }
+.publicprofile { --player-color: var(--ink); }
 
 @media (max-width: 560px) {
   .mainbtns { width: 100%; gap: 10px; }
@@ -319,9 +332,12 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
   .accountbox label { align-items: stretch; flex-direction: column; }
   .accountbox input { width: 100%; }
   .accountstats { grid-template-columns: repeat(3, 1fr); }
+  .solostats { grid-template-columns: repeat(2, 1fr); }
   .accountstats b { font-size: 28px; }
   .recentgames > div { align-items: flex-start; flex-direction: column; gap: 1px; text-align: left; }
   .leaderrow { grid-template-columns: 42px minmax(115px, 1fr) 86px; gap: 4px; padding: 6px 5px; font-size: 17px; }
   .leaderrow > span:nth-last-child(-n+2) { display: none; }
   .leaderrow .leadername { font-size: 19px; }
+  .playerresult, .duelrow { grid-template-columns: 1fr; gap: 4px; }
+  .duelrow > div { justify-content: flex-start; }
 }

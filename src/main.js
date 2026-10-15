@@ -15,7 +15,7 @@ import { Net } from './net.js';
 import { HUD, CONTROLS_HTML } from './hud.js';
 import { audio } from './audio.js';
 import { rand, choose, clamp } from './util.js';
-import { account, loadAccount, signup, login, logout, checkUsername, changeUsername, saveColor, leaderboard, recentGames, submitResult } from './account.js';
+import { account, loadAccount, signup, login, logout, checkUsername, changeUsername, saveColor, leaderboard, recentGames, recentSoloRuns, publicProfile, searchPlayers, duelRequests, requestDuel, respondDuel, cancelDuel, submitSoloRun, submitResult } from './account.js';
 
 const canvas = document.getElementById('c');
 const R = new InkRenderer(canvas);
@@ -88,6 +88,7 @@ const game = ctx.game = {
   state: 'start', mode: 'solo', menu: false, time: 0, hitstopT: 0, hitstopScale: 1, wave: 0, score: 0, combo: 0, comboT: 0, kills: 0, intermission: 0, queue: [], spawnT: 0, maxAlive: 6, deathT: 0,
   focus: { active: false, t: 0, chain: 0, target: null, dash: null, arm: 0, ready: false }, katanaStreak: 0, boss: null, respawnT: 0, matchT: 0, over: null, overT: 0,
   headshots: 0, matchId: null, matchStartedAt: 0, statsSubmittedFor: null, statsStatus: '',
+  soloRunId: null, soloStartedAt: 0, soloSubmittedFor: null, soloStatsStatus: '',
   hitstop(d, s) { this.hitstopT = Math.max(this.hitstopT, d); this.hitstopScale = s; },
   addScore(pts, label) { const mult = 1 + Math.min(this.combo, 9) * 0.25; const p = Math.round(pts * mult); this.score += p; if (label) hud.kill(label, p); hud.setScore(this.score, this.combo); },
   onPlayerDeath() { endFocus(); onLocalDeath(); },
@@ -106,7 +107,7 @@ function syncAccountUser() {
 }
 const net = new Net();
 const remote = new Map();      // peer id -> RemotePlayer
-const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null, matchMode: MATCH_TEAMS };
+const lobby = { players: new Map(), hostId: null, isPublic: true, status: '', code: '', map: null, matchMode: MATCH_TEAMS, duel: null };
 const scores = new Map();      // peer id -> { name, team, kills, deaths }
 const validTeam = (team) => team === TEAM_RED || team === TEAM_ORANGE;
 const teamInk = (team) => TEAM_INK[validTeam(team) ? team : TEAM_RED];
@@ -117,7 +118,7 @@ const teamOf = (id) => {
   const s = scores.get(id); if (s && validTeam(s.team)) return s.team;
   const r = remote.get(id); return r && validTeam(r.team) ? r.team : null;
 };
-let screen = 'main';           // main | online | lobby | account | leaderboard
+let screen = 'main';           // main | online | lobby | account | leaderboard | players | profile
 window.__game = { ctx, game, player, enemies, nav, world, level, hud, effects, input, net, remote, lobby, scores };
 
 // anything a bullet or a blade can hit besides enemies
@@ -333,7 +334,7 @@ function updateWaves(dt) {
 enemies.onKill = (e, info, over) => {
   game.kills++; game.combo++; game.comboT = 3.5;
   let label = e.T.name, pts = e.T.score;
-  if (info.crit) { label = 'HEADSHOT'; pts += 60; }
+  if (info.crit) { game.headshots++; label = 'HEADSHOT'; pts += 60; }
   if (info.source === 'katana') { label = over ? 'SLICED' : 'CUT DOWN'; pts += 50; }
   if (info.source === 'focus') { label = 'EXECUTED'; pts += 150; }
   if (info.source === 'katana' || info.source === 'focus') { game.katanaStreak++; player.weapons[player.katanaIndex].addBlood(0.42); if (game.katanaStreak >= KATANA_CHARGE_KILLS) enterFocus(); }
@@ -495,6 +496,25 @@ function checkWin() {
   if (winner) { net.send('end', winner); endMatch(winner); }
 }
 const newMatchId = () => crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, (c) => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+function startSoloRun() {
+  game.soloRunId = newMatchId(); game.soloStartedAt = Date.now(); game.soloSubmittedFor = null; game.soloStatsStatus = '';
+}
+async function recordSoloRun(endedReason) {
+  if (!account.user || online() || !game.soloRunId || game.soloSubmittedFor === game.soloRunId) return true;
+  const runId = game.soloRunId;
+  const payload = {
+    mapKey: loadedKey, score: Math.max(0, Math.round(game.score)), wave: Math.max(0, game.wave | 0),
+    kills: Math.max(0, game.kills | 0), deaths: endedReason === 'death' ? 1 : 0,
+    headshots: Math.min(Math.max(0, game.kills | 0), Math.max(0, game.headshots | 0)),
+    durationSeconds: Math.min(86400, Math.max(0, Math.round((Date.now() - game.soloStartedAt) / 1000))), endedReason,
+  };
+  game.soloSubmittedFor = runId; game.soloStatsStatus = 'saving private offline stats…';
+  const out = document.getElementById('soloSave'); if (out) out.textContent = game.soloStatsStatus;
+  try { const response = await submitSoloRun(runId, payload); syncAccountUser(); game.soloStatsStatus = response && response.recorded ? 'offline stats saved privately ✓' : 'offline stats already saved ✓'; }
+  catch (error) { game.soloSubmittedFor = null; game.soloStatsStatus = 'offline stats could not be saved · ' + (error.message || String(error)); }
+  const status = document.getElementById('soloSave'); if (status) status.textContent = game.soloStatsStatus;
+  return game.soloSubmittedFor === runId;
+}
 function resultForMe(winner) {
   if (winner.left) return 'loss';
   if (winner.draw) return 'draw';
@@ -538,7 +558,7 @@ function ensureLobbyTeams() {
   for (const [id, p] of lobby.players) if (!validTeam(p.team)) { p.team = pickBalancedTeam(); if (id === net.id) player.team = p.team; else addRemote(id, p.name, p.team, p.color); }
 }
 function refreshRemoteColors() { for (const [id, p] of lobby.players) if (id !== net.id) addRemote(id, p.name, p.team, p.color); }
-function broadcastLobby() { refreshRemoteColors(); net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, matchMode: lobby.matchMode, shown: net.aliasCode || net.code }); renderLobby(); }
+function broadcastLobby() { refreshRemoteColors(); net.send('lobby', { players: lobbyRows(), hostId: net.id, isPublic: lobby.isPublic, map: lobby.map || mapKey, matchMode: lobby.matchMode, shown: net.aliasCode || net.code, duel: lobby.duel }); renderLobby(); }
 function setLobbyMode(mode) {
   if (!net.isHost || game.state !== 'lobby' || !validMatchMode(mode)) return false;
   lobby.matchMode = mode; localStorage.setItem('doodle_match_mode', mode); lobby.status = ''; broadcastLobby(); return true;
@@ -604,6 +624,14 @@ async function _migrateHost() {
 net.on('refused', (d) => leaveOnline(d.reason));
 net.hostName = myName;
 net.onPeerJoin = (from, meta) => {
+  if (lobby.duel) {
+    const accountId = meta && typeof meta.accountId === 'string' ? meta.accountId : null;
+    const allowed = [lobby.duel.challengerId, lobby.duel.challengedId];
+    if (!accountId || !allowed.includes(accountId)) {
+      net.sendTo(from, 'kick', { reason: 'this private room is reserved for a duel' });
+      const conn = net.conns.get(from); setTimeout(() => { try { conn && conn.close(); } catch (error) { /* ignore */ } }, 300); return;
+    }
+  }
   const name = String(meta && meta.name || 'doodle').slice(0, 14);
   let preservedTeam = null, preservedColor = null;
   if (meta && meta.prev && meta.prev !== from) {
@@ -619,7 +647,7 @@ net.onPeerJoin = (from, meta) => {
   if (game.state === 'play' || game.state === 'dying') { if (!scores.has(from)) scores.set(from, { name, team, kills: 0, deaths: 0 }); net.sendTo(from, 'start', { late: true, spawn: farthestSpawnIndex(team), team, color, matchId: game.matchId, matchMode: lobby.matchMode, map: lobby.map || mapKey, broken: level.breakables.filter((b) => !b.alive).map((b) => b.id) }); sendScores(); hud.kill(name + (teamMode() ? ' joined ' + teamName(team) : ' joined the free for all'), 0); }
 };
 net.on('lobby', (d) => {
-  lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; lobby.order = d.players.map((p) => p.id); lobby.players.clear();
+  lobby.hostId = d.hostId; lobby.isPublic = !!d.isPublic; lobby.code = net.code; lobby.shown = d.shown || net.code; lobby.duel = d.duel || null; net.maxPlayers = lobby.duel ? 2 : 10; if (d.map) lobby.map = knownMap(d.map); if (validMatchMode(d.matchMode)) lobby.matchMode = d.matchMode; lobby.order = d.players.map((p) => p.id); lobby.players.clear();
   for (const p of d.players) lobby.players.set(p.id, { name: p.name, team: validTeam(p.team) ? p.team : TEAM_RED, color: validFfaColor(p.color) ? p.color : FFA_COLORS[0].id, accountId: p.accountId || null, badge: Number(p.badge || 0) });
   const mine = lobby.players.get(net.id); if (mine) { player.team = mine.team; myColor = mine.color; player.color = myColor; localStorage.setItem('doodle_ffa_color', myColor); lobby.status = ''; }
   for (const p of d.players) if (p.id !== net.id) { const rp = lobby.players.get(p.id); addRemote(p.id, p.name, rp.team, rp.color); }
@@ -710,6 +738,7 @@ function netUpdate(dt) {
 }
 function leaveOnline(reason) {
   net.leave(); for (const id of [...remote.keys()]) removeRemote(id); lobby.players.clear(); scores.clear(); hud.setBoard(null);
+  net.maxPlayers = 10; lobby.duel = null;
   if (game.state !== 'start') { game.state = 'start'; game.mode = 'solo'; setArena(false); resetGame(); hud.setGameplayVisible(false); }
   game.menu = false; lobby.status = reason || ''; screen = 'online'; showStart();
 }
@@ -730,15 +759,28 @@ async function leaveOnlineManually(button) {
 }
 async function createLobby(isPublic) {
   setStatus('opening a lobby…');
+  net.maxPlayers = 10; lobby.duel = null;
   try { await net.host({ isPublic }); }
   catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
   lobby.isPublic = isPublic; lobby.map = mapKey; lobby.matchMode = validMatchMode(localStorage.getItem('doodle_match_mode')) ? localStorage.getItem('doodle_match_mode') : MATCH_TEAMS; lobby.players.clear(); player.team = Math.random() < 0.5 ? TEAM_RED : TEAM_ORANGE; player.color = myColor; lobby.players.set(net.id, { name: myName, team: player.team, color: myColor, accountId: account.user && account.user.id, badge: account.user && account.user.badge ? account.user.badge.level : 0 }); lobby.hostId = net.id; lobby.status = '';
   game.state = 'lobby'; screen = 'lobby'; showStart();
 }
-async function joinLobby(code) {
+async function joinLobby(code, duel = null) {
   setStatus('connecting…');
+  net.maxPlayers = duel ? 2 : 10; lobby.duel = duel;
   try { await net.join(code, { name: myName, color: myColor, accountId: account.user && account.user.id, badge: account.user && account.user.badge ? account.user.badge.level : 0 }); } catch (err) { setStatus(friendlyError(err)); unlockButtons(); return; }
   lobby.isPublic = net.isPublic; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart();
+}
+async function createDuelLobby(duel) {
+  if (net.active) throw new Error('Leave your current lobby before accepting a duel.');
+  setStatus('opening the duel room…'); net.maxPlayers = 2;
+  const duelInfo = { id: duel.id, challengerId: duel.opponent.id, challengedId: account.user.id };
+  try { await net.host({ isPublic: false, code: duel.roomCode }); }
+  catch (error) { net.maxPlayers = 10; throw error; }
+  lobby.duel = duelInfo; lobby.isPublic = false; lobby.map = mapKey; lobby.matchMode = MATCH_FFA; lobby.players.clear();
+  player.team = TEAM_RED; player.color = myColor;
+  lobby.players.set(net.id, { name: myName, team: player.team, color: myColor, accountId: account.user.id, badge: account.user.badge ? account.user.badge.level : 0 });
+  lobby.hostId = net.id; lobby.status = 'duel accepted · waiting for ' + duel.opponent.username; game.state = 'lobby'; screen = 'lobby'; showStart();
 }
 async function quickPlay() {
   try { await net.quickJoin({ name: myName, color: myColor, accountId: account.user && account.user.id, badge: account.user && account.user.badge ? account.user.badge.level : 0 }, setStatus); lobby.isPublic = true; lobby.status = ''; game.state = 'lobby'; screen = 'lobby'; showStart(); return; }
@@ -818,7 +860,7 @@ const badgeHTML = (badge) => {
   return resolved ? `<span class="userbadge" title="${resolved.level}+ online kills">★ ${esc(resolved.label)}</span>` : '';
 };
 const accountBadge = () => account.user && account.user.badge ? badgeHTML(account.user.badge) : '';
-let accountGames = null, accountGamesBusy = false;
+let accountGames = null, accountGamesBusy = false, accountSoloRuns = null, accountSoloBusy = false;
 let boardScope = 'weekly', boardData = null, boardBusy = false, boardError = '';
 
 function accountHTML() {
@@ -827,27 +869,71 @@ function accountHTML() {
     <section><h3>CREATE ACCOUNT</h3><label>unique username<input id="signupName" maxlength="14" autocomplete="username" placeholder="3–14 letters, numbers, _"></label><label>password<input id="signupPass" type="password" maxlength="128" autocomplete="new-password" placeholder="at least 8 characters"></label><button type="button" class="big" id="signupBtn">SIGN UP</button></section>
     <section><h3>SIGN IN</h3><label>username<input id="loginName" maxlength="14" autocomplete="username"></label><label>password<input id="loginPass" type="password" maxlength="128" autocomplete="current-password"></label><button type="button" id="loginBtn">SIGN IN</button></section>
     <div class="status" id="accountStatus">${esc(account.notice || '')}</div><div class="row"><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
-  const u = account.user, s = u.stats;
+  const u = account.user, s = u.stats, solo = u.soloStats || { gamesPlayed: 0, kills: 0, deaths: 0, headshots: 0, bestScore: 0, bestWave: 0, playSeconds: 0 };
   const games = accountGames ? accountGames.slice(0, 8).map((g) => `<div><span>${esc(String(g.mapKey).toUpperCase())} · ${esc(String(g.mode).toUpperCase())}</span><span>${g.kills} K · ${g.deaths} D · ${g.headshots} HS · ${esc(String(g.result).toUpperCase())}</span></div>`).join('') : `<div><span>${accountGamesBusy ? 'loading matches…' : 'no recorded matches yet'}</span></div>`;
+  const soloRuns = accountSoloRuns ? accountSoloRuns.slice(0, 8).map((g) => `<div><span>${esc(String(g.mapKey).toUpperCase())} · WAVE ${g.wave}</span><span>${g.kills} K · ${g.headshots} HS · ${g.score} SCORE</span></div>`).join('') : `<div><span>${accountSoloBusy ? 'loading offline runs…' : 'no recorded offline runs yet'}</span></div>`;
   return `<h1>YOUR ACCOUNT</h1><h2>${esc(u.username)} ${accountBadge()}</h2><div class="accountbox profilebox" id="accountBox">
+    <section><h3>ONLINE STATS · PUBLIC</h3>
     <div class="accountstats"><div><b>${s.kills}</b><span>kills</span></div><div><b>${s.deaths}</b><span>deaths</span></div><div><b>${s.headshots}</b><span>headshots</span></div><div><b>${s.wins}</b><span>wins</span></div><div><b>${s.gamesPlayed}</b><span>games</span></div></div>
+    </section><section><h3>OFFLINE STATS · PRIVATE</h3><div class="hint">visible only to you · never affects leaderboards or badges</div>
+    <div class="accountstats solostats"><div><b>${solo.kills}</b><span>kills</span></div><div><b>${solo.deaths}</b><span>deaths</span></div><div><b>${solo.headshots}</b><span>headshots</span></div><div><b>${solo.bestWave}</b><span>best wave</span></div><div><b>${solo.bestScore}</b><span>best score</span></div><div><b>${solo.gamesPlayed}</b><span>runs</span></div></div></section>
     <section><h3>PLAYER COLOR</h3><div class="ffacolors accountcolors">${FFA_COLORS.map((c) => `<button type="button" class="colorbtn${u.color === c.id ? ' on' : ''}" data-account-color="${c.id}" style="--swatch:${c.hex}">${c.name}</button>`).join('')}</div></section>
     <section><h3>CHANGE USERNAME</h3><div class="row usernamechange"><input id="newUsername" maxlength="14" value="${esc(u.username)}"><button type="button" id="checkUsernameBtn">CHECK</button><button type="button" id="saveUsernameBtn" disabled>SAVE</button></div><div class="hint" id="usernameStatus">check availability before saving</div></section>
     <section class="recentgames"><h3>RECENT ONLINE GAMES</h3>${games}</section>
-    <div class="status" id="accountStatus">${esc(account.notice || '')}</div><div class="row"><button type="button" id="leaderboardBtn">LEADERBOARDS</button><button type="button" class="alt" id="logoutBtn">SIGN OUT</button><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
+    <section class="recentgames"><h3>RECENT OFFLINE RUNS · PRIVATE</h3>${soloRuns}</section>
+    <div class="status" id="accountStatus">${esc(account.notice || '')}</div><div class="row"><button type="button" id="playersBtn">PLAYERS & DUELS</button><button type="button" id="leaderboardBtn">LEADERBOARDS</button><button type="button" class="alt" id="logoutBtn">SIGN OUT</button><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
 }
 
 function leaderboardHTML() {
   const rows = boardData && boardData.rows || [];
-  const list = rows.length ? rows.map((r) => `<div class="leaderrow top${r.rank}" style="--player-color:${ffaColor(r.color).hex}"><b class="rank">${r.rank <= 3 ? ['🥇','🥈','🥉'][r.rank - 1] : r.rank + '.'}</b><span class="leadername">${esc(r.username)} ${badgeHTML(r.badge)}</span><span><strong>${r.kills}</strong> kills</span><span>${r.headshots} HS</span><span>${r.deaths} D</span></div>`).join('') : `<div class="loadingline">${boardBusy ? 'drawing the board…' : boardError ? esc(boardError) : 'no recorded matches yet'}</div>`;
+  const list = rows.length ? rows.map((r) => `<div class="leaderrow top${r.rank}" style="--player-color:${ffaColor(r.color).hex}"><b class="rank">${r.rank <= 3 ? ['🥇','🥈','🥉'][r.rank - 1] : r.rank + '.'}</b><span class="leadername"><button type="button" class="profilelink" data-profile="${esc(r.username)}">${esc(r.username)}</button> ${badgeHTML(r.badge)}</span><span><strong>${r.kills}</strong> kills</span><span>${r.headshots} HS</span><span>${r.deaths} D</span></div>`).join('') : `<div class="loadingline">${boardBusy ? 'drawing the board…' : boardError ? esc(boardError) : 'no recorded matches yet'}</div>`;
   const reset = boardScope === 'weekly' && boardData && boardData.resetAt ? `<div class="hint">weekly board resets Monday · next reset ${new Date(boardData.resetAt).toLocaleString()}</div>` : '';
   return `<h1>LEADERBOARDS</h1><h2>top 10 online players</h2><div class="leaderbox" id="leaderBox"><div class="boardtabs"><button type="button" data-board="weekly" class="${boardScope === 'weekly' ? 'on' : ''}">THIS WEEK</button><button type="button" data-board="all-time" class="${boardScope === 'all-time' ? 'on' : ''}">ALL TIME</button></div><div class="leaderrows">${list}</div>${reset}<div class="hint">ranking: kills · then headshots · then fewer deaths</div><div class="row"><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
+}
+
+let playerRows = [], playerSearchBusy = false, playerSearchError = '';
+let viewedProfile = null, profileBusy = false, profileError = '', profileBack = 'players';
+let duelData = { incoming: [], outgoing: [] }, duelBusy = false, duelNotice = '', duelLoaded = false;
+const activeDuelCount = () => duelData.incoming.filter((d) => d.status === 'pending').length;
+
+function duelRowHTML(duel, incoming) {
+  const action = incoming
+    ? duel.status === 'pending'
+      ? `<button type="button" data-duel-accept="${duel.id}">ACCEPT</button><button type="button" class="alt" data-duel-decline="${duel.id}">DECLINE</button>`
+      : `<button type="button" data-duel-host="${duel.id}">OPEN DUEL ROOM</button>`
+    : duel.status === 'accepted'
+      ? `<button type="button" data-duel-join="${duel.id}">JOIN DUEL</button><button type="button" class="alt" data-duel-cancel="${duel.id}">CANCEL</button>`
+      : `<span class="hint">waiting for an answer</span><button type="button" class="alt" data-duel-cancel="${duel.id}">CANCEL</button>`;
+  return `<div class="duelrow" style="--player-color:${ffaColor(duel.opponent.color).hex}"><button type="button" class="profilelink" data-profile="${esc(duel.opponent.username)}">${esc(duel.opponent.username)}</button><span>${duel.status === 'accepted' ? 'accepted · room ' + esc(duel.roomCode || '') : incoming ? 'challenged you' : 'challenge sent'}</span><div>${action}</div></div>`;
+}
+
+function playersHTML() {
+  if (!account.user) return `<h1>PLAYERS</h1><div class="leaderbox"><div class="loadingline">sign in to find players and duel</div><div class="row"><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
+  const results = playerRows.length ? playerRows.map((u) => `<div class="playerresult" style="--player-color:${ffaColor(u.color).hex}"><button type="button" class="profilelink" data-profile="${esc(u.username)}">${esc(u.username)}</button>${badgeHTML(u.badge)}<span>${u.stats.kills} online kills</span><button type="button" data-challenge="${esc(u.username)}">DUEL</button></div>`).join('') : `<div class="hint">${playerSearchBusy ? 'searching…' : playerSearchError ? esc(playerSearchError) : 'search by username to find another player'}</div>`;
+  const incoming = duelData.incoming.length ? duelData.incoming.map((d) => duelRowHTML(d, true)).join('') : '<div class="hint">no incoming challenges</div>';
+  const outgoing = duelData.outgoing.length ? duelData.outgoing.map((d) => duelRowHTML(d, false)).join('') : '<div class="hint">no outgoing challenges</div>';
+  return `<h1>PLAYERS & DUELS</h1><h2>find a player, view their public profile, or challenge them to a private 1 vs 1</h2><div class="leaderbox playerhub" id="playerHub">
+    <section><h3>FIND A PLAYER</h3><div class="row"><input id="playerSearch" maxlength="14" placeholder="username"><button type="button" id="playerSearchBtn">SEARCH</button></div><div class="playerresults">${results}</div></section>
+    <section><h3>INCOMING DUELS ${activeDuelCount() ? `<b class="duelcount">${activeDuelCount()}</b>` : ''}</h3>${incoming}</section>
+    <section><h3>OUTGOING DUELS</h3>${outgoing}</section>
+    <div class="status" id="duelStatus">${esc(duelNotice)}</div><div class="row"><button type="button" class="alt" id="refreshDuelsBtn">REFRESH</button><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
+}
+
+function profileHTML() {
+  if (profileBusy) return `<h1>PLAYER PROFILE</h1><div class="leaderbox"><div class="loadingline">drawing profile…</div></div>`;
+  if (!viewedProfile) return `<h1>PLAYER PROFILE</h1><div class="leaderbox"><div class="loadingline">${esc(profileError || 'player not found')}</div><div class="row"><button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
+  const u = viewedProfile.user, s = u.stats, mine = account.user && account.user.id === u.id;
+  const games = (viewedProfile.recentGames || []).map((g) => `<div><span>${esc(String(g.mapKey).toUpperCase())} · ${esc(String(g.mode).toUpperCase())}</span><span>${g.kills} K · ${g.deaths} D · ${g.headshots} HS · ${esc(String(g.result).toUpperCase())}</span></div>`).join('') || '<div><span>no recorded online matches</span></div>';
+  return `<h1>PLAYER PROFILE</h1><h2 class="publicname" style="--player-color:${ffaColor(u.color).hex}">${esc(u.username)} ${badgeHTML(u.badge)}</h2><div class="accountbox publicprofile" id="profileBox">
+    <section><h3>ONLINE STATS</h3><div class="accountstats"><div><b>${s.kills}</b><span>kills</span></div><div><b>${s.deaths}</b><span>deaths</span></div><div><b>${s.headshots}</b><span>headshots</span></div><div><b>${s.wins}</b><span>wins</span></div><div><b>${s.gamesPlayed}</b><span>games</span></div></div></section>
+    <section class="recentgames"><h3>RECENT ONLINE GAMES</h3>${games}</section>
+    <div class="status" id="profileStatus">${esc(duelNotice)}</div><div class="row">${!mine && account.user ? `<button type="button" id="profileDuelBtn">REQUEST DUEL</button>` : ''}<button type="button" class="alt" id="backBtn">BACK</button></div></div>`;
 }
 
 function setAccountStatus(text) { account.notice = text; const el = hud.el.panel.querySelector('#accountStatus'); if (el) el.textContent = text; }
 async function accountAction(action) {
   setAccountStatus('working…');
-  try { await action(); syncAccountUser(); account.notice = ''; accountGames = null; showStart(); }
+  try { await action(); syncAccountUser(); account.notice = ''; accountGames = null; accountSoloRuns = null; showStart(); }
   catch (error) { setAccountStatus(error.message || String(error)); }
 }
 function wireAccount() {
@@ -860,6 +946,7 @@ function wireAccount() {
     return;
   }
   if (!accountGames && !accountGamesBusy) { accountGamesBusy = true; recentGames().then((d) => { accountGames = d.games || []; }).catch(() => { accountGames = []; }).finally(() => { accountGamesBusy = false; if (screen === 'account') showStart(); }); }
+  if (!accountSoloRuns && !accountSoloBusy) { accountSoloBusy = true; recentSoloRuns().then((d) => { accountSoloRuns = d.runs || []; }).catch(() => { accountSoloRuns = []; }).finally(() => { accountSoloBusy = false; if (screen === 'account') showStart(); }); }
   box.querySelector('.accountcolors').addEventListener('click', (e) => { const b = e.target.closest('[data-account-color]'); if (b) accountAction(() => saveColor(b.dataset.accountColor)); });
   let checked = '';
   q('checkUsernameBtn').addEventListener('click', async () => { const value = q('newUsername').value.trim(); const status = q('usernameStatus'); q('saveUsernameBtn').disabled = true; checked = ''; try { const result = await checkUsername(value); status.textContent = result.available ? 'available ✓' : 'already taken'; if (result.available) { checked = result.username; q('saveUsernameBtn').disabled = false; } } catch (error) { status.textContent = error.message || String(error); } });
@@ -867,10 +954,12 @@ function wireAccount() {
   q('saveUsernameBtn').addEventListener('click', () => { if (checked) accountAction(() => changeUsername(checked)); });
   q('logoutBtn').addEventListener('click', () => accountAction(async () => { await logout(); myName = localStorage.getItem('doodle_name') || 'doodle' + Math.floor(Math.random() * 90 + 10); }));
   q('leaderboardBtn').addEventListener('click', () => { screen = 'leaderboard'; showStart(); loadLeaderboard(); });
+  q('playersBtn').addEventListener('click', () => { screen = 'players'; showStart(); loadDuels(true); });
 }
 function wireLeaderboard() {
   const box = hud.el.panel.querySelector('#leaderBox'); if (!box) return; box.addEventListener('click', (e) => e.stopPropagation());
   box.querySelectorAll('[data-board]').forEach((b) => b.addEventListener('click', () => { boardScope = b.dataset.board; boardData = null; showStart(); loadLeaderboard(); }));
+  wireProfileLinks(box, 'leaderboard');
   box.querySelector('#backBtn').addEventListener('click', () => { screen = account.user ? 'account' : 'main'; showStart(); });
 }
 async function loadLeaderboard() {
@@ -879,11 +968,93 @@ async function loadLeaderboard() {
   finally { boardBusy = false; if (screen === 'leaderboard') showStart(); }
 }
 
+function wireProfileLinks(box, back = screen) {
+  box.querySelectorAll('[data-profile]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openProfile(button.dataset.profile, back); }));
+}
+async function openProfile(username, back = 'players') {
+  profileBack = back; profileBusy = true; profileError = ''; viewedProfile = null; duelNotice = ''; screen = 'profile'; showStart();
+  try { viewedProfile = await publicProfile(username); }
+  catch (error) { profileError = error.message || String(error); }
+  finally { profileBusy = false; if (screen === 'profile') showStart(); }
+}
+async function loadDuels(render = false) {
+  if (!account.user || duelBusy) return;
+  duelBusy = true;
+  try {
+    const previous = activeDuelCount(); duelData = await duelRequests(); duelLoaded = true;
+    if (activeDuelCount() > previous && game.state !== 'play' && game.state !== 'dying') hud.tip('NEW DUEL CHALLENGE', 2.5);
+  } catch (error) { if (render) duelNotice = error.message || String(error); }
+  finally { duelBusy = false; if (render && screen === 'players') showStart(); }
+}
+async function runPlayerSearch() {
+  const inputEl = hud.el.panel.querySelector('#playerSearch'), q = inputEl ? inputEl.value.trim() : '';
+  if (q.length < 2) { playerSearchError = 'type at least 2 characters'; playerRows = []; showStart(); return; }
+  playerSearchBusy = true; playerSearchError = ''; showStart();
+  try { const data = await searchPlayers(q); playerRows = data.rows || []; if (!playerRows.length) playerSearchError = 'no players found'; }
+  catch (error) { playerRows = []; playerSearchError = error.message || String(error); }
+  finally { playerSearchBusy = false; if (screen === 'players') showStart(); }
+}
+async function sendDuelChallenge(username) {
+  duelNotice = 'sending challenge…'; if (screen === 'players' || screen === 'profile') showStart();
+  try { await requestDuel(username); duelNotice = 'duel request sent to ' + username + ' ✓'; await loadDuels(false); }
+  catch (error) { duelNotice = error.message || String(error); }
+  if (screen === 'players' || screen === 'profile') showStart();
+}
+const duelById = (id, incoming) => (incoming ? duelData.incoming : duelData.outgoing).find((d) => d.id === id);
+async function acceptDuelRequest(id) {
+  const row = duelById(id, true); if (!row) return;
+  if (net.active) { duelNotice = 'leave your current lobby before accepting a duel'; showStart(); return; }
+  duelNotice = 'accepting duel…'; showStart();
+  try {
+    let roomCode = row.roomCode;
+    if (row.status === 'pending') { const response = await respondDuel(id, 'accept'); roomCode = response.duel.roomCode; }
+    await createDuelLobby({ ...row, roomCode }); duelNotice = '';
+  } catch (error) { duelNotice = friendlyError(error); screen = 'players'; await loadDuels(false); showStart(); }
+}
+async function declineDuelRequest(id) {
+  duelNotice = 'declining…'; showStart();
+  try { await respondDuel(id, 'decline'); duelNotice = 'duel declined'; }
+  catch (error) { duelNotice = error.message || String(error); }
+  await loadDuels(false); if (screen === 'players') showStart();
+}
+async function cancelDuelRequest(id) {
+  duelNotice = 'cancelling…'; showStart();
+  try { await cancelDuel(id); duelNotice = 'duel request cancelled'; }
+  catch (error) { duelNotice = error.message || String(error); }
+  await loadDuels(false); if (screen === 'players') showStart();
+}
+async function joinAcceptedDuel(id) {
+  const row = duelById(id, false); if (!row || !row.roomCode) return;
+  if (net.active) { duelNotice = 'leave your current lobby before joining a duel'; showStart(); return; }
+  const duel = { id: row.id, challengerId: account.user.id, challengedId: row.opponent.id };
+  screen = 'online'; showStart(); await joinLobby(row.roomCode, duel);
+}
+function wirePlayers() {
+  const box = hud.el.panel.querySelector('#playerHub');
+  if (!box) { const back = hud.el.panel.querySelector('#backBtn'); if (back) back.addEventListener('click', () => { screen = 'main'; showStart(); }); return; }
+  box.addEventListener('click', (e) => e.stopPropagation()); box.addEventListener('keydown', (e) => e.stopPropagation()); wireProfileLinks(box, 'players');
+  const search = box.querySelector('#playerSearch'), searchBtn = box.querySelector('#playerSearchBtn');
+  searchBtn.addEventListener('click', runPlayerSearch); search.addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlayerSearch(); });
+  box.querySelectorAll('[data-challenge]').forEach((b) => b.addEventListener('click', () => sendDuelChallenge(b.dataset.challenge)));
+  box.querySelectorAll('[data-duel-accept],[data-duel-host]').forEach((b) => b.addEventListener('click', () => acceptDuelRequest(b.dataset.duelAccept || b.dataset.duelHost)));
+  box.querySelectorAll('[data-duel-decline]').forEach((b) => b.addEventListener('click', () => declineDuelRequest(b.dataset.duelDecline)));
+  box.querySelectorAll('[data-duel-cancel]').forEach((b) => b.addEventListener('click', () => cancelDuelRequest(b.dataset.duelCancel)));
+  box.querySelectorAll('[data-duel-join]').forEach((b) => b.addEventListener('click', () => joinAcceptedDuel(b.dataset.duelJoin)));
+  box.querySelector('#refreshDuelsBtn').addEventListener('click', () => loadDuels(true));
+  box.querySelector('#backBtn').addEventListener('click', () => { screen = 'main'; showStart(); });
+}
+function wireProfile() {
+  const box = hud.el.panel.querySelector('#profileBox') || hud.el.panel; box.addEventListener('click', (e) => e.stopPropagation());
+  const back = box.querySelector('#backBtn'); if (back) back.addEventListener('click', () => { screen = profileBack === 'lobby' && game.state === 'lobby' ? 'lobby' : profileBack; showStart(); });
+  const duel = box.querySelector('#profileDuelBtn'); if (duel && viewedProfile) duel.addEventListener('click', () => sendDuelChallenge(viewedProfile.user.username));
+}
+
 function mainHTML() {
   const who = account.user ? `<div class="accountpill">signed in as <b>${esc(account.user.username)}</b> ${accountBadge()}</div>` : '<div class="accountpill">sign in to record online stats</div>';
+  const duelAlert = account.user && activeDuelCount() ? ` <b class="duelcount">${activeDuelCount()}</b>` : '';
   return `<h1>DOODLE DISTRICT</h1><h2>a scribbled survival shooter</h2>
     <div class="mainbtns"><button type="button" class="start" id="soloBtn">START<i>solo · survive the waves</i></button><button type="button" id="onlineBtn">PLAY ONLINE<i>free for all or red vs black · up to 10 players</i></button></div>
-    <div class="accountnav"><button type="button" id="accountBtn">ACCOUNT</button><button type="button" id="leaderboardBtn">LEADERBOARDS</button>${who}</div>
+    <div class="accountnav"><button type="button" id="accountBtn">ACCOUNT</button><button type="button" id="playersBtn">PLAYERS / DUELS${duelAlert}</button><button type="button" id="leaderboardBtn">LEADERBOARDS</button>${who}</div>
     ${mapHTML(mapKey, true)}${CONTROLS_HTML}${settingsHTML()}${checkpointHTML()}${best ? `<div class="beststat">best score: ${best}</div>` : ''}`;
 }
 function onlineHTML() {
@@ -902,20 +1073,20 @@ function onlineHTML() {
 }
 function lobbyHTML() {
   const rows = lobbyRows(); const host = net.isHost; const n = rows.length;
-  const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${esc(p.name)} ${badgeHTML(p.badge)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
-  const ffaList = rows.map((p) => `<div class="ffaplayer ${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}" style="--player-color:${ffaColor(p.color).hex}"><span>${esc(p.name)} ${badgeHTML(p.badge)}</span><span>${ffaColor(p.color).name}${p.id === net.id ? ' · you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const playerName = (p) => p.accountId && p.id !== net.id ? `<button type="button" class="profilelink" data-profile="${esc(p.name)}">${esc(p.name)}</button> ${badgeHTML(p.badge)}` : `${esc(p.name)} ${badgeHTML(p.badge)}`;
+  const teamList = (team) => rows.filter((p) => p.team === team).map((p) => `<div class="${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}"><span>${playerName(p)}</span><span>${p.id === net.id ? 'you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
+  const ffaList = rows.map((p) => `<div class="ffaplayer ${p.id === lobby.hostId ? 'host' : ''}${p.id === net.id ? ' me' : ''}" style="--player-color:${ffaColor(p.color).hex}"><span>${playerName(p)}</span><span>${ffaColor(p.color).name}${p.id === net.id ? ' · you' : ''}</span></div>`).join('') || '<div class="emptyteam">waiting…</div>';
   const mine = lobby.players.get(net.id), myTeam = mine && validTeam(mine.team) ? mine.team : player.team, mineColor = mine && validFfaColor(mine.color) ? mine.color : myColor;
   const teams = lobby.matchMode === MATCH_TEAMS;
-  return `<h1>LOBBY</h1><h2>${teams ? 'choose your team · first team' : 'free for all · first player'} to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
+  return `<h1>${lobby.duel ? 'DUEL LOBBY' : 'LOBBY'}</h1><h2>${lobby.duel ? 'private 1 vs 1 · ' : teams ? 'choose your team · ' : 'free for all · '}${teams ? 'first team' : 'first player'} to ${TEAM_TARGET} · ${n}/${net.maxPlayers} players</h2>
     <div class="online" id="online">
       <div class="row"><span>code</span><span class="code">${String(net.isHost ? (net.aliasCode || net.code) : (lobby.shown || net.code) || '').replace(/-\d+$/, '')}</span></div>
       ${mapHTML(lobby.map || mapKey, host)}
-      <div class="hint">${lobby.isPublic ? 'this lobby is public: anyone can quick play in, or type the code' : 'private lobby: friends type this code under PLAY ONLINE → JOIN'}</div>
-      <div class="modes" role="group" aria-label="Match mode"><button type="button" class="modebtn${lobby.matchMode === MATCH_FFA ? ' on' : ''}" data-match-mode="${MATCH_FFA}" ${host ? '' : 'disabled'}>FREE FOR ALL<i>everyone can fight everyone</i></button><button type="button" class="modebtn${teams ? ' on' : ''}" data-match-mode="${MATCH_TEAMS}" ${host ? '' : 'disabled'}>TEAMS<i>red vs black · no friendly fire</i></button></div>
-      <div class="hint">${host ? 'host chooses the match mode' : `host selected ${teams ? 'red vs black teams' : 'free for all'}`}</div>
+      <div class="hint">${lobby.duel ? 'reserved two-player room · duel mode is free for all' : lobby.isPublic ? 'this lobby is public: anyone can quick play in, or type the code' : 'private lobby: friends type this code under PLAY ONLINE → JOIN'}</div>
+      ${lobby.duel ? '' : `<div class="modes" role="group" aria-label="Match mode"><button type="button" class="modebtn${lobby.matchMode === MATCH_FFA ? ' on' : ''}" data-match-mode="${MATCH_FFA}" ${host ? '' : 'disabled'}>FREE FOR ALL<i>everyone can fight everyone</i></button><button type="button" class="modebtn${teams ? ' on' : ''}" data-match-mode="${MATCH_TEAMS}" ${host ? '' : 'disabled'}>TEAMS<i>red vs black · no friendly fire</i></button></div><div class="hint">${host ? 'host chooses the match mode' : `host selected ${teams ? 'red vs black teams' : 'free for all'}`}</div>`}
       ${teams ? `<div class="teamchoice" role="group" aria-label="Choose your team"><span>your team</span><button type="button" class="redteam${myTeam === TEAM_RED ? ' on' : ''}" data-team="${TEAM_RED}" aria-pressed="${myTeam === TEAM_RED}">RED TEAM</button><button type="button" class="orangeteam${myTeam === TEAM_ORANGE ? ' on' : ''}" data-team="${TEAM_ORANGE}" aria-pressed="${myTeam === TEAM_ORANGE}">BLACK TEAM</button></div>
       <div class="teamroster"><section class="redteam"><h3>RED TEAM</h3><div class="plist">${teamList(TEAM_RED)}</div></section><div class="teamvs">VS</div><section class="orangeteam"><h3>BLACK TEAM</h3><div class="plist">${teamList(TEAM_ORANGE)}</div></section></div>` : `<div class="ffacolors" role="group" aria-label="Choose your FFA color"><span>your color</span>${FFA_COLORS.map((c) => `<button type="button" class="colorbtn${mineColor === c.id ? ' on' : ''}" data-color="${c.id}" style="--swatch:${c.hex}" aria-pressed="${mineColor === c.id}">${c.name}</button>`).join('')}</div><div class="teamroster ffaroster"><section><h3>EVERY PLAYER IS AN ENEMY</h3><div class="plist">${ffaList}</div></section></div>`}
-      <div class="row">${host ? '<button type="button" class="big" id="startBtn">START MATCH</button>' : '<span class="hint">waiting for the host to start the match…</span>'}<button type="button" class="alt" id="leaveBtn">LEAVE</button></div>
+      <div class="row">${host ? `<button type="button" class="big" id="startBtn" ${lobby.duel && n < 2 ? 'disabled' : ''}>${lobby.duel && n < 2 ? 'WAITING FOR OPPONENT' : 'START MATCH'}</button>` : '<span class="hint">waiting for the host to start the match…</span>'}<button type="button" class="alt" id="leaveBtn">LEAVE</button></div>
       <div class="status" id="status">${esc(lobby.status || '')}</div><div class="hint">${teams ? 'choose or switch teams before the match starts · new players receive a balanced default' : 'every player can damage every other player'}</div>
     </div>`;
 }
@@ -935,6 +1106,7 @@ function wireOnline() {
   const box = hud.el.panel.querySelector('#online'); if (!box) return;
   box.addEventListener('click', (e) => e.stopPropagation()); box.addEventListener('keydown', (e) => e.stopPropagation());
   const q = (id) => box.querySelector('#' + id); wireName(box);
+  wireProfileLinks(box, 'lobby');
   if (q('quickBtn')) q('quickBtn').addEventListener('click', () => { lockButtons(box); quickPlay(); });
   if (q('createBtn')) q('createBtn').addEventListener('click', () => { lockButtons(box); createLobby(box.querySelector('input[name=vis]:checked').value === 'public'); });
   if (q('joinBtn')) { q('joinBtn').addEventListener('click', () => { const c = q('codeBox').value.trim().toUpperCase(); if (!c) { setStatus('type the code your friend gave you'); return; } lockButtons(box); joinLobby(c); }); q('codeBox').addEventListener('keydown', (e) => { if (e.key === 'Enter') q('joinBtn').click(); }); }
@@ -954,8 +1126,8 @@ function unlockButtons() { const box = hud.el.panel.querySelector('#online'); if
 function renderLobby() { if (game.state === 'lobby') showStart(); }
 function showStart() {
   hud.setGameplayVisible(false);
-  if (game.state === 'lobby') screen = 'lobby';
-  const html = screen === 'lobby' ? lobbyHTML() : screen === 'online' ? onlineHTML() : screen === 'account' ? accountHTML() : screen === 'leaderboard' ? leaderboardHTML() : mainHTML();
+  if (game.state === 'lobby' && screen !== 'profile') screen = 'lobby';
+  const html = screen === 'lobby' ? lobbyHTML() : screen === 'online' ? onlineHTML() : screen === 'account' ? accountHTML() : screen === 'leaderboard' ? leaderboardHTML() : screen === 'players' ? playersHTML() : screen === 'profile' ? profileHTML() : mainHTML();
   hud.showScreen(html);
   const p = hud.el.panel;
   if (screen === 'main') {
@@ -963,8 +1135,9 @@ function showStart() {
     p.querySelector('#soloBtn').addEventListener('click', (e) => { e.stopPropagation(); begin(); });
     p.querySelector('#onlineBtn').addEventListener('click', (e) => { e.stopPropagation(); if (!account.user) { account.notice = 'Create an account or sign in before playing online.'; screen = 'account'; } else screen = 'online'; showStart(); });
     p.querySelector('#accountBtn').addEventListener('click', (e) => { e.stopPropagation(); account.notice = ''; screen = 'account'; showStart(); });
+    p.querySelector('#playersBtn').addEventListener('click', (e) => { e.stopPropagation(); if (!account.user) { account.notice = 'Sign in to find players and request duels.'; screen = 'account'; } else { screen = 'players'; loadDuels(false); } showStart(); });
     p.querySelector('#leaderboardBtn').addEventListener('click', (e) => { e.stopPropagation(); screen = 'leaderboard'; showStart(); loadLeaderboard(); });
-  } else if (screen === 'account') wireAccount(); else if (screen === 'leaderboard') wireLeaderboard(); else wireOnline();
+  } else if (screen === 'account') wireAccount(); else if (screen === 'leaderboard') wireLeaderboard(); else if (screen === 'players') wirePlayers(); else if (screen === 'profile') wireProfile(); else wireOnline();
 }
 function showPause() {
   if (online()) {
@@ -979,12 +1152,13 @@ function showPause() {
 function showClickToPlay() { hud.showScreen(`<h1>MATCH ON</h1><h2>${teamMode() ? `team deathmatch · you are on <span class="${player.team === TEAM_ORANGE ? 'orangeteam' : 'redteam'}">${teamName(player.team)}</span>` : 'free for all · everyone is an enemy'}</h2><div class="go">CLICK ANYWHERE (or press ${hud.key('confirm')}) TO PLAY</div>`); }
 function showDead() {
   hud.setGameplayVisible(false); const nb = game.score > best; if (nb) { best = game.score; localStorage.setItem('doodle_best', String(best)); }
-  hud.showScreen(`<h1>ERASED</h1><div class="stats">you survived <b>${game.wave}</b> wave${game.wave === 1 ? '' : 's'} · <b>${game.kills}</b> kills · score <b>${game.score}</b>${nb ? ' · <b>NEW BEST</b>' : ` · best ${best}`}</div>${checkpointHTML()}${menuBtnHTML()}<div class="go">CLICK (or press ${hud.key('confirm')}) TO DRAW AGAIN</div>`);
+  hud.showScreen(`<h1>ERASED</h1><div class="stats">you survived <b>${game.wave}</b> wave${game.wave === 1 ? '' : 's'} · <b>${game.kills}</b> kills · <b>${game.headshots}</b> headshots · score <b>${game.score}</b>${nb ? ' · <b>NEW BEST</b>' : ` · best ${best}`}</div><div class="matchsave" id="soloSave">${account.user ? 'saving private offline stats…' : 'sign in to keep private offline stats'}</div>${checkpointHTML()}${menuBtnHTML()}<div class="go">CLICK (or press ${hud.key('confirm')}) TO DRAW AGAIN</div>`);
+  recordSoloRun('death');
   wireCheckpoints((w) => beginAtWave(w)); wireMenuBtn();
 }
 function menuBtnHTML() { return '<div class="online menubtn"><div class="row"><button type="button" class="alt" id="menuBtn">MAIN MENU</button></div></div>'; }
 function wireMenuBtn() { const b = hud.el.panel.querySelector('#menuBtn'); if (b) b.addEventListener('click', (e) => { e.stopPropagation(); toMainMenu(); }); }
-function toMainMenu() { game.state = 'start'; game.mode = 'solo'; game.menu = false; setArena(false); resetGame(); audio.reelLoop(false); input.exitLock(); hud.setGameplayVisible(false); screen = 'main'; showStart(); }
+function toMainMenu() { if (!online() && game.soloRunId && game.state !== 'dead') recordSoloRun('left'); game.state = 'start'; game.mode = 'solo'; game.menu = false; setArena(false); resetGame(); audio.reelLoop(false); input.exitLock(); hud.setGameplayVisible(false); screen = 'main'; showStart(); }
 function toLobbyScreen() { net.inMatch = false; for (const r of remote.values()) r.lastSeen = performance.now(); setArena(true); resetGame(); game.state = 'lobby'; game.over = null; game.menu = false; hud.setGameplayVisible(false); hud.setBoard(null); screen = 'lobby'; showStart(); }
 
 // ---------------- run control ----------------
@@ -996,10 +1170,12 @@ function resetGame() {
   game.score = 0; game.kills = 0; game.headshots = 0; game.combo = 0; game.wave = 0; game.intermission = 0; game.queue = []; game.time = 0; game.over = null; game.matchT = 0; game.statsStatus = ''; hud.setScore(0, 0); hud.setTimer(''); hud.setPvpScore(null); hud.setWave(1, 0); hud.setBoard(null);
 }
 function beginCommon() { audio.init(); audio.resume(); if (!input.usingGamepad) input.requestLock(); if (musicWanted && !audio.musicPlaying) audio.musicOn(true); hud.hideScreen(); hud.setGameplayVisible(true); game.menu = false; }
-function begin() { game.mode = 'solo'; setArena(false); beginCommon(); if (game.state === 'start' || game.state === 'dead') { resetGame(); startWave(1); } game.state = 'play'; }
-function beginAtWave(n) { game.mode = 'solo'; setArena(false); beginCommon(); resetGame(); startWave(n); game.state = 'play'; }
+function begin() { game.mode = 'solo'; setArena(false); beginCommon(); if (game.state === 'start' || game.state === 'dead') { resetGame(); startSoloRun(); startWave(1); } game.state = 'play'; }
+function beginAtWave(n) { game.mode = 'solo'; setArena(false); beginCommon(); resetGame(); startSoloRun(); startWave(n); game.state = 'play'; }
 function jumpToWave(n) { enemies.clear(); effects.clear(); enemies.mods.speed = 1; enemies.mods.damage = 1; endFocus(); game.intermission = 0; game.queue = []; startWave(n); hud.hideScreen(); hud.setGameplayVisible(true); game.state = 'play'; game.menu = false; audio.reelLoop(false); }
 function hostStart() {
+  if (lobby.duel && lobby.players.size < 2) { lobby.status = 'your opponent has not joined yet'; renderLobby(); return; }
+  if (lobby.duel) lobby.matchMode = MATCH_FFA;
   ensureLobbyTeams(); broadcastLobby();
   scores.clear(); for (const [id, p] of lobby.players) scores.set(id, { name: p.name, team: p.team, kills: 0, deaths: 0 });
   setArena(true); const ordered = spawnSpots().map((s, i) => ({ i, x: s.x })).sort((a, b) => a.x - b.x).map((x) => x.i);
@@ -1017,6 +1193,7 @@ function hostStart() {
 }
 function startMatch(late, spawnIdx, matchMode = lobby.matchMode, matchId = null) {
   lobby.matchMode = validMatchMode(matchMode) ? matchMode : MATCH_TEAMS; net.inMatch = true; game.mode = lobby.matchMode === MATCH_FFA ? 'ffa' : 'team'; setArena(true); resetGame(); matchLeft = MATCH_TIME; clockT = 0; game.clockStarted = false;
+  game.soloRunId = null; game.soloSubmittedFor = null;
   game.matchId = matchId || game.matchId || newMatchId(); game.matchStartedAt = Date.now(); game.statsSubmittedFor = null;
   // nobody sends snapshots in the lobby, so the silence clock restarts here or the sweep would drop everyone
   for (const r of remote.values()) r.lastSeen = performance.now();
@@ -1045,7 +1222,8 @@ window.addEventListener('pagehide', () => { if (net.active) net.leave(); });
 // browsers only let audio start on a gesture; any press wakes the context if it went to sleep
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { audio.init(); audio.resume(); }, { passive: true });
 hud.setDevice(input.usingGamepad); applySettings(); hud.setWeapon(player.weapon.name, player.weapon.hint); showStart();
-loadAccount().then(() => { syncAccountUser(); if (game.state === 'start' && screen === 'main') showStart(); });
+loadAccount().then(() => { syncAccountUser(); if (account.user) loadDuels(false); if (game.state === 'start' && screen === 'main') showStart(); });
+setInterval(() => { if (account.user) loadDuels(false); }, 20000);
 
 // ---------------- loop ----------------
 let last = performance.now(), boardToggle = false, lockTipT = 0.5, musicHealT = 2;

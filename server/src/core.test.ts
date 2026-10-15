@@ -43,4 +43,8 @@ test('match result primitives reject invalid or inflated values', () => {
   assert.equal(validate.integer(4, 0, 1000), 4);
   assert.equal(validate.integer(1001, 0, 1000), null);
   assert.equal(validate.integer(4.5, 0, 1000), null);
+  assert.equal(validate.soloEndReason('death'), 'death');
+  assert.equal(validate.soloEndReason('online'), null);
+  assert.equal(validate.duelAction('accept'), 'accept');
+  assert.equal(validate.duelAction('block'), null);
 });

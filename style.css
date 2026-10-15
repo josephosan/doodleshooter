@@ -207,15 +207,15 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .pvpscore .row .rank { opacity: .6; }
 .pvpscore .target { font-size: 15px; opacity: .65; margin-top: 2px; }
 
-/* red vs orange team mode */
+/* red vs black team mode */
 .redteam { color: #d02030 !important; }
-.orangeteam { color: #e94712 !important; text-shadow: 0 1px 0 rgba(255,255,255,.8); }
+.orangeteam { color: #171a22 !important; text-shadow: 0 1px 0 rgba(255,255,255,.9); }
 .teamchoice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 5px auto 10px; }
 .teamchoice > span { font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
 .teamchoice button { min-width: 150px; border-color: currentColor; background: rgba(250,248,238,.82); }
 .teamchoice button.on { color: #fff !important; box-shadow: 3px 4px 0 var(--ink); transform: translate(-1px,-1px) rotate(-.4deg); }
 .teamchoice button.redteam.on { background: #d02030; }
-.teamchoice button.orangeteam.on { background: #e94712; color: #fff !important; text-shadow: 0 1px 0 rgba(0,0,0,.28); }
+.teamchoice button.orangeteam.on { background: #171a22; color: #fff !important; text-shadow: none; }
 .teamroster { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(240px, 1fr); gap: 18px; align-items: start; width: min(760px, 92vw); margin: 4px auto; }
 .teamroster section { border: 3px solid currentColor; border-radius: 10px 14px 9px 12px / 12px 9px 14px 10px; padding: 8px 10px 10px; background: rgba(250,248,238,.78); }
 .teamroster h3, .scoreteam h4 { margin: 0 0 5px; font-size: 27px; letter-spacing: 2px; }
@@ -268,9 +268,49 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 .lobbyrow .code { font-size: 22px; letter-spacing: 3px; padding: 0 8px; border-width: 2px; }
 .lobbyrow button { font-size: 18px; padding: 3px 12px; }
 
+/* accounts, persistent profiles, and global leaderboards */
+.accountnav { display: flex; justify-content: center; align-items: center; gap: 9px; flex-wrap: wrap; margin: 10px 0 4px; }
+.accountnav button, .accountbox button, .leaderbox button { font: inherit; font-size: 20px; color: var(--paper); background: var(--ink); border: 2.5px solid var(--ink); border-radius: 7px 10px 6px 9px / 10px 6px 9px 7px; padding: 5px 14px; cursor: pointer; }
+.accountnav button:nth-child(2), .accountbox button.alt, .leaderbox button.alt { color: var(--ink); background: transparent; }
+.accountbox button:disabled { opacity: .38; cursor: default; }
+.accountpill { font-size: 18px; padding-left: 6px; }
+.accountbox, .leaderbox { display: flex; flex-direction: column; gap: 14px; align-items: stretch; max-width: 900px; margin: 4px auto 0; font-size: 20px; }
+.accountbox > section { padding: 10px 14px; border: 2px dashed rgba(26,48,192,.45); border-radius: 10px 14px 9px 12px; }
+.accountbox h3, .leaderbox h3 { margin: 0 0 7px; font-size: 25px; }
+.accountbox label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px auto; max-width: 520px; text-align: left; }
+.accountbox input { box-sizing: border-box; min-width: 0; width: 260px; font: inherit; color: var(--ink); background: rgba(255,255,255,.45); border: 2px solid var(--ink); border-radius: 6px 9px 6px 8px; padding: 4px 8px; }
+.accountbox .row, .leaderbox .row { display: flex; justify-content: center; align-items: center; gap: 9px; flex-wrap: wrap; }
+.accountstats { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 8px; }
+.accountstats > div { display: flex; flex-direction: column; padding: 8px 5px; border-bottom: 2px solid var(--ink); }
+.accountstats b { color: var(--red); font-size: 34px; line-height: 1; }
+.accountstats span { font-size: 17px; }
+.userbadge { display: inline-block; color: var(--paper); background: #171a22; border: 2px solid #171a22; border-radius: 8px; padding: 1px 7px; font-size: .58em; letter-spacing: 1px; vertical-align: middle; transform: rotate(-1deg); }
+.recentgames > div { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1.5px solid rgba(26,48,192,.24); padding: 3px 6px; }
+.boardtabs { display: flex; justify-content: center; gap: 8px; }
+.boardtabs button { color: var(--ink); background: transparent; }
+.boardtabs button.on { color: var(--paper); background: var(--ink); }
+.leaderrows { display: flex; flex-direction: column; gap: 5px; }
+.leaderrow { display: grid; grid-template-columns: 54px minmax(150px, 1fr) 110px 85px 70px; align-items: center; gap: 8px; padding: 7px 12px; text-align: left; border: 2px solid rgba(26,48,192,.3); border-left: 8px solid var(--player-color); border-radius: 7px; }
+.leaderrow .rank { font-size: 25px; text-align: center; }
+.leaderrow .leadername { font-size: 23px; font-weight: bold; color: var(--player-color); }
+.leaderrow.top1 { background: rgba(255,205,40,.18); border-width: 3px; transform: rotate(-.25deg); }
+.leaderrow.top2 { background: rgba(125,145,170,.12); }
+.leaderrow.top3 { background: rgba(166,93,49,.11); }
+.loadingline, .matchsave { font-size: 22px; color: var(--red); min-height: 28px; }
+.matchsave { margin-top: 12px; }
+
 @media (max-width: 560px) {
   .mainbtns { width: 100%; gap: 10px; }
   .mainbtns button { box-sizing: border-box; width: 100%; max-width: 100%; padding: 10px 12px; font-size: clamp(26px, 9vw, 36px); }
   .mainbtns button i { white-space: normal; font-size: 14px; }
   .mainbtns button.start { min-width: 0; width: 100%; padding: 14px 18px; font-size: clamp(38px, 13vw, 54px); }
+  .accountbox { font-size: 18px; }
+  .accountbox label { align-items: stretch; flex-direction: column; }
+  .accountbox input { width: 100%; }
+  .accountstats { grid-template-columns: repeat(3, 1fr); }
+  .accountstats b { font-size: 28px; }
+  .recentgames > div { align-items: flex-start; flex-direction: column; gap: 1px; text-align: left; }
+  .leaderrow { grid-template-columns: 42px minmax(115px, 1fr) 86px; gap: 4px; padding: 6px 5px; font-size: 17px; }
+  .leaderrow > span:nth-last-child(-n+2) { display: none; }
+  .leaderrow .leadername { font-size: 19px; }
 }

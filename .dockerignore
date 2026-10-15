@@ -8,3 +8,4 @@ docker-compose.yml
 .dockerignore
 .env
 turn-credentials.py
+server

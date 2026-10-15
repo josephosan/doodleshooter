@@ -30,6 +30,16 @@ server {\n\
         proxy_set_header X-Forwarded-Proto $scheme;\n\
         proxy_read_timeout 75s;\n\
     }\n\
+    location /api/ {\n\
+        proxy_pass http://api:3000;\n\
+        proxy_http_version 1.1;\n\
+        proxy_set_header Host $host;\n\
+        proxy_set_header X-Real-IP $remote_addr;\n\
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+        proxy_set_header X-Forwarded-Proto $scheme;\n\
+        proxy_read_timeout 15s;\n\
+        client_max_body_size 32k;\n\
+    }\n\
     location /vendor/ {\n\
         expires 30d;\n\
         add_header Cache-Control "public, immutable";\n\

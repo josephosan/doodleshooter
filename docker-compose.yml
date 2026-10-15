@@ -7,6 +7,7 @@ services:
     depends_on:
       - turn_credentials
       - peer_server
+      - api
     environment:
       VIRTUAL_HOST: doodol.josephosanlou.ir
       VIRTUAL_PORT: "80"
@@ -16,6 +17,47 @@ services:
     networks:
       - default
       - core-net
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: doodleshooter-api:latest
+    container_name: doodleshooter_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-doodleshooter}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-doodleshooter}
+      DB_POOL_SIZE: "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+      start_period: 10s
+
+  postgres:
+    image: postgres:15
+    container_name: doodleshooter_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-doodleshooter}
+      POSTGRES_USER: ${POSTGRES_USER:-doodleshooter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - doodleshooter_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   turn_credentials:
     image: python:3.13-alpine
@@ -78,3 +120,6 @@ services:
 networks:
   core-net:
     external: true
+
+volumes:
+  doodleshooter_postgres_data:

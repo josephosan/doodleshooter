@@ -11,7 +11,8 @@ export const MEXICO_READY = true;
 export const JUNGLE_READY = true;
 export const DUST_READY = true;
 export const AFTERMATH_READY = true;
-export const LEVELS = [{ key: 'district', name: 'DOODLE DISTRICT', blurb: 'streets, rooftops and fire escapes' }, ...(MEXICO_READY ? [{ key: 'mexico', name: 'DOODLE MEXICO', blurb: 'a sun-baked plaza · piñatas, tacos and mariachi' }] : []), ...(JUNGLE_READY ? [{ key: 'jungle', name: 'DOODLE JUNGLE', blurb: 'ruins, rope bridges and a river under the canopy' }] : []), ...(DUST_READY ? [{ key: 'dust', name: 'DOODLE DUST', blurb: 'open desert lanes, ruins and two tactical sites' }] : []), ...(AFTERMATH_READY ? [{ key: 'aftermath', name: 'DOODLE AFTERMATH', blurb: 'a huge fallen city · towers, roads and airborne wreckage' }] : [])];
+export const TEHRAN_READY = true;
+export const LEVELS = [{ key: 'district', name: 'DOODLE DISTRICT', blurb: 'streets, rooftops and fire escapes' }, ...(MEXICO_READY ? [{ key: 'mexico', name: 'DOODLE MEXICO', blurb: 'a sun-baked plaza · piñatas, tacos and mariachi' }] : []), ...(JUNGLE_READY ? [{ key: 'jungle', name: 'DOODLE JUNGLE', blurb: 'ruins, rope bridges and a river under the canopy' }] : []), ...(DUST_READY ? [{ key: 'dust', name: 'DOODLE DUST', blurb: 'open desert lanes, ruins and two tactical sites' }] : []), ...(AFTERMATH_READY ? [{ key: 'aftermath', name: 'DOODLE AFTERMATH', blurb: 'a huge fallen city · towers, roads and airborne wreckage' }] : []), ...(TEHRAN_READY ? [{ key: 'tehran', name: 'DOODLE TEHRAN', blurb: 'Milad Tower · highways, rooftops and mountain air' }] : [])];
 
 function createBuilder(scene, world) {
   const geos = {}; const L = { rings: [], spawns: [], snipers: [], pickups: [], animated: [], meshes: [], playerStart: new THREE.Vector3(0, 0, 42), bounds: { minX: -55, maxX: 55, minZ: -55, maxZ: 55 }, arenaSpawns: [], grappleMovers: [], breakables: [], key: 'district' };
@@ -912,11 +913,142 @@ function buildAftermath(B, arena = false) {
   B.finish(); return L;
 }
 
+// ============================ map 6: Doodle Tehran ============================
+// A huge roofless Tehran-inspired arena. Milad Tower dominates the centre while
+// working exterior stairs make every major rooftop a reachable sniper position.
+function buildTehran(B, arena = false) {
+  const { L, box, slab, wallX, wallZ, stairs, switchbackStairs, rail, cyl, sphere, ring, spawn, sniper, pickup, addGeo, collider, scene } = B;
+  const ASPHALT = INK.BLACK, GLASS = INK.BLUE, LIGHT = INK.ORANGE, PARK = INK.GREEN, BRICK = INK.RED, NEON = INK.PINK;
+  L.key = 'tehran'; L.playerStart.set(-24, 0, 30);
+  const P = arena ? 188 : 176, PH = 30;
+  L.bounds = { minX: -P, maxX: P, minZ: -P, maxZ: P };
+
+  // A roofless shell: visible low walls plus tall, invisible, unhookable side barriers.
+  box(0, -1, 0, 2 * P + 10, 1, 2 * P + 10, { ink: GLASS });
+  box(0, 0, -P, 2 * P + 10, PH, 3, { ink: ASPHALT }); box(0, 0, P, 2 * P + 10, PH, 3, { ink: ASPHALT });
+  box(-P, 0, 0, 3, PH, 2 * P + 10, { ink: ASPHALT }); box(P, 0, 0, 3, PH, 2 * P + 10, { ink: ASPHALT });
+  const border = { noNav: true, noGrapple: true };
+  collider(0, -4, -P + 1.5, 2 * P, 138, 2.5, border); collider(0, -4, P - 1.5, 2 * P, 138, 2.5, border);
+  collider(-P + 1.5, -4, 0, 2.5, 138, 2 * P, border); collider(P - 1.5, -4, 0, 2.5, 138, 2 * P, border);
+
+  // Broad expressways, dashed lanes, sidewalks and zebra crossings.
+  const roadX = (x, width = 20) => {
+    addGeo(new THREE.BoxGeometry(width, 0.08, 2 * P - 10).translate(x, 0.05, 0), ASPHALT);
+    for (let z = -P + 12; z < P - 10; z += 13) for (const dx of [-width / 4, width / 4]) addGeo(new THREE.BoxGeometry(0.22, 0.04, 6).translate(x + dx, 0.11, z), LIGHT);
+    for (const side of [-1, 1]) addGeo(new THREE.BoxGeometry(1.6, 0.12, 2 * P - 10).translate(x + side * (width / 2 + 1), 0.08, 0), GLASS);
+  };
+  const roadZ = (z, width = 20) => {
+    addGeo(new THREE.BoxGeometry(2 * P - 10, 0.08, width).translate(0, 0.05, z), ASPHALT);
+    for (let x = -P + 12; x < P - 10; x += 13) for (const dz of [-width / 4, width / 4]) addGeo(new THREE.BoxGeometry(6, 0.04, 0.22).translate(x, 0.11, z + dz), LIGHT);
+    for (const side of [-1, 1]) addGeo(new THREE.BoxGeometry(2 * P - 10, 0.12, 1.6).translate(0, 0.08, z + side * (width / 2 + 1)), GLASS);
+  };
+  for (const x of [-82, 82]) roadX(x, 22);
+  for (const z of [-82, 82]) roadZ(z, 22);
+  roadX(0, 15); roadZ(0, 15);
+  for (const x of [-82, 0, 82]) for (const z of [-82, 0, 82]) {
+    for (let i = -4; i <= 4; i++) {
+      addGeo(new THREE.BoxGeometry(1.25, 0.04, 6.5).translate(x + i * 2.05, 0.14, z), GLASS);
+      addGeo(new THREE.BoxGeometry(6.5, 0.04, 1.25).translate(x, 0.15, z + i * 2.05), GLASS);
+    }
+  }
+
+  // Milad Tower: climbable from the plaza all the way to the observation roof.
+  slab(-29, -29, 29, 29, 0.16, 0.18, { ink: GLASS });
+  for (const [x, z] of [[-24, -24], [24, -24], [-24, 24], [24, 24]]) { cyl(x, 0, z, 0.45, 9, { ink: ASPHALT }); ring(x, 11, z, 'y'); }
+  cyl(0, 0, 0, 4.8, 55, { ink: GLASS, seg: 18 });
+  for (const h of [12, 24, 36, 48]) { cyl(0, h - 0.25, 0, 6.4, 0.5, { ink: LIGHT, seg: 18 }); ring(0, h + 2, 6.8, 'y'); }
+  // The stair tower sits beyond the pod radius; broad landings connect it to the shaft and roof.
+  switchbackStairs(0, 0, 18.4, 61, 15, 2.4, 12, { ink: LIGHT });
+  for (const y of [12, 24, 36, 48]) slab(-2.2, 5, 2.2, 19.5, y, 0.35, { ink: LIGHT });
+  // Observation pod, restaurant decks and the open sniper roof.
+  cyl(0, 52, 0, 12.5, 4, { ink: NEON, seg: 20 });
+  cyl(0, 56, 0, 16.5, 3.2, { ink: GLASS, seg: 24 });
+  cyl(0, 59.2, 0, 13.8, 2.2, { ink: LIGHT, seg: 22 });
+  slab(-3, 10, 3, 20, 61.4, 0.45, { ink: LIGHT });
+  for (let i = 0; i < 12; i++) { const a = i * TAU / 12; ring(Math.cos(a) * 14.2, 64, Math.sin(a) * 14.2, 'y'); }
+  cyl(0, 61.4, 0, 3.2, 22, { ink: GLASS, seg: 14 });
+  cyl(0, 83.4, 0, 1.25, 19, { ink: BRICK, seg: 10 });
+  sphere(0, 103.2, 0, 1.6, { ink: LIGHT, seg: 10 });
+  sniper(0, 62, 0); pickup(5, 62, 0); pickup(-5, 62, 0);
+
+  // Reachable modern towers. Each roof is open and every staircase terminates on its roof.
+  const cityTower = (x, z, w, d, h, ink = GLASS) => {
+    const levels = Math.max(3, Math.round(h / 8));
+    for (const [dx, dz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]]) box(x + dx, 0, z + dz, 1, h, 1, { ink: ASPHALT });
+    for (let f = 1; f <= levels; f++) {
+      const y = h * f / levels; slab(x - w / 2, z - d / 2, x + w / 2, z + d / 2, y, 0.42, { ink });
+      if (f < levels) ring(x + (f % 2 ? w / 2 - 2 : -w / 2 + 2), y + 2, z, 'y');
+    }
+    switchbackStairs(x, 0, z + d / 2 + 1.2, h, w - 3, 2.2, levels, { ink: LIGHT });
+    rail(x - w / 2, z - d / 2, x + w / 2, z - d / 2, h, { ink: ASPHALT });
+    rail(x + w / 2, z - d / 2, x + w / 2, z + d / 2, h, { ink: ASPHALT });
+    rail(x + w / 2, z + d / 2, x - w / 2, z + d / 2, h, { ink: ASPHALT });
+    ring(x, h + 3, z, 'y'); sniper(x, h + 0.5, z); pickup(x + 3, h + 0.5, z - 3);
+    return new THREE.Vector3(x, h + 0.55, z);
+  };
+  const roofs = [
+    cityTower(-132, -132, 22, 19, 42), cityTower(-48, -132, 20, 18, 34, NEON), cityTower(48, -132, 24, 20, 50), cityTower(132, -132, 21, 18, 38, BRICK),
+    cityTower(-132, -48, 20, 18, 30, BRICK), cityTower(132, -48, 24, 20, 48), cityTower(-132, 48, 23, 19, 46), cityTower(132, 48, 21, 18, 34, NEON),
+    cityTower(-132, 132, 22, 19, 38), cityTower(-48, 132, 25, 21, 52, LIGHT), cityTower(48, 132, 22, 19, 40), cityTower(132, 132, 24, 20, 48, BRICK)
+  ];
+
+  // Low bazaars, parks, footbridges, traffic gantries and city furniture.
+  const bazaar = (x, z, w = 30, d = 24, h = 9, ink = BRICK) => {
+    wallX(x - w / 2, x + w / 2, z - d / 2, 0, h, 0.7, [[x - 3, x + 3, 0, 3.4], [x - 11, x - 6, 4.5, 7]], { ink });
+    wallX(x - w / 2, x + w / 2, z + d / 2, 0, h, 0.7, [[x + 5, x + 10, 0, 3.4]], { ink });
+    wallZ(z - d / 2, z + d / 2, x - w / 2, 0, h, 0.7, [[z - 3, z + 3, 0, 3.4]], { ink });
+    wallZ(z - d / 2, z + d / 2, x + w / 2, 0, h, 0.7, [[z + 4, z + 9, 3.8, 7.5]], { ink });
+    slab(x - w / 2, z - d / 2, x + w / 2, z + d / 2, h, 0.4, { ink: GLASS });
+    switchbackStairs(x, 0, z + d / 2 + 0.9, h, w - 5, 2, 3, { ink: LIGHT }); ring(x, h + 2.5, z, 'y');
+  };
+  for (const [x, z, ink] of [[-45, -45, BRICK], [45, -45, NEON], [-45, 45, LIGHT], [45, 45, BRICK], [-120, 0, NEON], [120, 0, BRICK], [0, -120, LIGHT], [0, 120, GLASS]]) bazaar(x, z, 29, 25, 10, ink);
+  for (const [x, z] of [[-48, 78], [48, 78], [-48, -78], [48, -78], [-78, 48], [-78, -48], [78, 48], [78, -48]]) {
+    slab(x - 12, z - 10, x + 12, z + 10, 0.18, 0.18, { ink: PARK });
+    for (const [dx, dz] of [[-8, -6], [8, -6], [-8, 6], [8, 6], [0, 0]]) { cyl(x + dx, 0, z + dz, 0.55, 5, { ink: BRICK }); sphere(x + dx, 6.2, z + dz, 2.5, { ink: PARK }); }
+  }
+  for (const [x, y, z, w, d] of [[0, 16, -82, 26, 5], [0, 20, 82, 28, 5], [-82, 24, 0, 5, 26], [82, 18, 0, 5, 28]]) {
+    box(x, y, z, w, 0.55, d, { ink: LIGHT }); ring(x, y + 3, z, 'y');
+    box(x, y - 8, z, 0.12, 16, 0.12, { noCollide: true, ink: ASPHALT });
+  }
+  for (const [x, z, alongX] of [[-82, -42, false], [-82, 42, false], [82, -42, false], [82, 42, false], [-42, -82, true], [42, -82, true], [-42, 82, true], [42, 82, true]]) {
+    box(x, 0, z, alongX ? 9 : 3.4, 2.2, alongX ? 3.4 : 9, { ink: NEON });
+    box(x, 2.2, z, alongX ? 4 : 2.8, 1.2, alongX ? 2.8 : 4, { ink: GLASS });
+  }
+
+  // Kites, taxis, metro cars and signs circle the open sky as moving grapple targets.
+  const skyObject = (shape, rx, rz, h, phase, speed, ink, scale = 1) => {
+    let g; let radius;
+    if (shape === 'taxi') { g = new THREE.BoxGeometry(6 * scale, 2.2 * scale, 3 * scale); radius = 3.8 * scale; }
+    else if (shape === 'metro') { g = new THREE.BoxGeometry(12 * scale, 3.2 * scale, 3.5 * scale); radius = 6.5 * scale; }
+    else if (shape === 'kite') { g = new THREE.OctahedronGeometry(2.6 * scale).scale(1, 0.28, 1.5); radius = 3.5 * scale; }
+    else if (shape === 'sign') { g = new THREE.BoxGeometry(8 * scale, 4 * scale, 0.6 * scale); radius = 4.8 * scale; }
+    else if (shape === 'dish') { g = new THREE.TorusGeometry(2.3 * scale, 0.5 * scale, 9, 20); radius = 3.3 * scale; }
+    else { g = new THREE.DodecahedronGeometry(2.5 * scale).scale(1.4, 0.75, 1); radius = 3.8 * scale; }
+    const mesh = new THREE.Mesh(g, makeInkMaterial({ ink })); scene.add(mesh); L.meshes.push(mesh); L.grappleMovers.push({ mesh, radius });
+    L.animated.push({ mesh, update: (t) => { const a = t * speed + phase, bob = Math.sin(a * 2.4 + phase); mesh.position.set(Math.cos(a) * rx, h + bob * 5, Math.sin(a) * rz); mesh.rotation.set(bob * 0.3, -a, shape === 'kite' || shape === 'dish' ? a * 1.8 : bob * 0.4); } });
+  };
+  for (const args of [
+    ['taxi', 45, 58, 42, 0.2, 0.075, LIGHT, 1], ['metro', 95, 52, 54, 1.2, -0.05, GLASS, 0.9], ['kite', 70, 88, 72, 2.2, 0.07, BRICK, 1],
+    ['sign', 118, 68, 46, 3.1, -0.042, NEON, 1], ['dish', 48, 116, 84, 4.1, 0.055, GLASS, 1.1], ['debris', 126, 112, 64, 5.2, -0.036, LIGHT, 1],
+    ['taxi', 105, 34, 78, 2.7, 0.046, BRICK, 0.9], ['metro', 62, 128, 92, 5.8, -0.032, NEON, 0.75], ['kite', 138, 92, 96, 0.9, 0.028, PARK, 1.2],
+    ['sign', 82, 142, 58, 4.7, -0.03, LIGHT, 0.85], ['dish', 142, 46, 104, 1.8, 0.026, BRICK, 0.9], ['debris', 112, 132, 86, 3.8, -0.024, GLASS, 1.15]
+  ]) skyObject(...args);
+
+  // Safe starts stay well inside the perimeter and on supported surfaces.
+  for (const [x, z] of [[-160, -110], [-160, -40], [-160, 40], [-160, 110], [160, -110], [160, -40], [160, 40], [160, 110], [-110, -160], [-40, -160], [40, -160], [110, -160], [-110, 160], [-40, 160], [40, 160], [110, 160]]) spawn(x, 0, z);
+  for (const [x, y, z] of [[-66, 0, -30], [66, 0, 30], [-30, 0, 66], [30, 0, -66], [0, 0, 36], [0, 0, -36], [-36, 0, 0], [36, 0, 0], ...roofs.slice(0, 8).map((r) => [r.x, r.y, r.z])]) pickup(x, y, z);
+  for (const [x, y, z] of [[-166, 0, -120], [-166, 0, -60], [-166, 0, 60], [-166, 0, 120], [166, 0, -120], [166, 0, -60], [166, 0, 60], [166, 0, 120]]) L.arenaSpawns.push(new THREE.Vector3(x, y, z));
+  for (const r of roofs) L.arenaSpawns.push(r.clone());
+
+  B.finish(); return L;
+}
+
 export function buildLevel(scene, world, key = 'district', opts = {}) {
   const B = createBuilder(scene, world);
   if (key === 'mexico') return buildMexico(B, !!opts.arena);
   if (key === 'jungle') return buildJungle(B, !!opts.arena);
   if (key === 'dust') return buildDust(B, !!opts.arena);
   if (key === 'aftermath') return buildAftermath(B, !!opts.arena);
+  if (key === 'tehran') return buildTehran(B, !!opts.arena);
   return buildDistrict(B, !!opts.arena);
 }

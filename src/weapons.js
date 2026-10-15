@@ -66,6 +66,8 @@ const GUNS = {
   rifle: { name: 'RIFLE', hint: 'auto · put the red dot on them', kind: 'rifle', magSize: 35, reserve: 175, maxReserve: 350, interval: 1 / 11, damage: 24, headMul: 2.6, pellets: 1, spread: 0.016, adsSpread: 0.0034, spreadKick: 0.009, spreadMax: 0.075, adsFov: 58, sight: [0, 0.12, -0.05, 0.3], camKick: [0.009, 0.0034], modelKick: [0.25, 0.3, 2.4, -3.2, 0.9, 1.2], fovKick: 1.2, reloadDur: 1.45, reloadType: 'mag', auto: true, falloff: null, tracer: 0.02, flashScale: 1, sound: 'shot', shell: [0.02, INK.ORANGE], moveSpread: 0.0012, pvp: [19, 1.8, null] },
   sniper: { name: 'SNIPER', hint: 'scoped bolt action · one shot, one erasure', kind: 'sniper', scope: true, magSize: 5, reserve: 25, maxReserve: 50, interval: 0.2, damage: 150, headMul: 3, pellets: 1, spread: 0.075, adsSpread: 0.0004, spreadKick: 0.05, spreadMax: 0.14, adsFov: 20, sight: [0, 0.135, 0, 0.42], camKick: [0.055, 0.008], modelKick: [0.25, 0.8, 4.5, -11, 1.2, 2], fovKick: 4.5, reloadDur: 2.1, reloadType: 'mag', auto: false, falloff: null, tracer: 0.03, flashScale: 1.7, sound: 'sniperFire', shell: [0.03, INK.ORANGE], moveSpread: 0.004, cycleDur: 0.85, pvp: [150, 1.5, null] },
   revolver: { name: 'REVOLVER', hint: 'hand cannon · headshots erase', kind: 'revolver', magSize: 6, reserve: 36, maxReserve: 72, interval: 0.3, damage: 62, headMul: 3, pellets: 1, spread: 0.006, adsSpread: 0.002, spreadKick: 0.02, spreadMax: 0.06, adsFov: 52, sight: [0, 0.08, -0.34, 0.42], camKick: [0.038, 0.007], modelKick: [0.3, 0.9, 3.2, -10, 1.5, 2.5], fovKick: 2.5, reloadDur: 1.9, reloadType: 'cylinder', auto: false, falloff: null, tracer: 0.026, flashScale: 1.35, sound: 'revolver', shell: null, moveSpread: 0.0015, pvp: [52, 2.9, [9, 34, 0.42]] },
+  deagle: { name: 'DESERT EAGLE', hint: 'heavy pistol · accurate headshots hit hard', kind: 'deagle', magSize: 7, reserve: 28, maxReserve: 56, interval: 0.34, damage: 68, headMul: 2.8, pellets: 1, spread: 0.009, adsSpread: 0.0015, spreadKick: 0.028, spreadMax: 0.075, adsFov: 54, sight: [0, 0.075, -0.2, 0.4], camKick: [0.043, 0.007], modelKick: [0.32, 0.95, 3.5, -10.5, 1.5, 2.4], fovKick: 2.8, reloadDur: 1.65, reloadType: 'mag', auto: false, falloff: [20, 62, 0.72], tracer: 0.028, flashScale: 1.45, sound: 'revolver', shell: [0.026, INK.ORANGE], moveSpread: 0.0018, pvp: [46, 2.15, [18, 58, 0.72]] },
+  rpg: { name: 'RPG', hint: 'limited rockets · splash damage · watch your feet', kind: 'rpg', magSize: 1, reserve: 2, maxReserve: 4, interval: 0.9, damage: 170, headMul: 1, pellets: 1, spread: 0.004, adsSpread: 0.001, spreadKick: 0.025, spreadMax: 0.04, adsFov: 60, sight: [0, 0.11, -0.38, 0.38], camKick: [0.055, 0.006], modelKick: [0.25, 0.85, 4.2, -9, 1.2, 2], fovKick: 5, reloadDur: 2.6, reloadType: 'mag', auto: false, falloff: null, tracer: 0.05, flashScale: 1.9, sound: 'rpg', shell: null, moveSpread: 0.002, pvp: [0, 1, null] },
 };
 
 export class Gun extends ViewModel {
@@ -201,6 +203,47 @@ export class Revolver extends Gun {
     this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.035, -0.4); g.add(this.muzzle);
     this.ejectPt = new THREE.Object3D(); this.ejectPt.position.set(-0.05, 0.02, 0); g.add(this.ejectPt);
     this.flash = makeFlash(g, 0, 0.035, -0.4, 1);
+  }
+}
+
+export class DesertEagle extends Gun {
+  constructor(ctx) { super(ctx, 'deagle'); this.basePos.set(0.2, -0.2, -0.31); }
+  build() {
+    const g = this.root, mat = this.mat, dark = this.dark;
+    bx(0.075, 0.105, 0.38, 0, 0.025, -0.08, mat, g); bx(0.065, 0.055, 0.18, 0, 0.075, -0.32, dark, g);
+    cyl(0.022, 0.34, 0, 0.035, -0.43, dark, g); bx(0.055, 0.15, 0.075, 0, -0.105, 0.08, dark, g).rotation.x = 0.28;
+    this.magMesh = bx(0.045, 0.13, 0.055, 0, -0.12, 0.06, mat, g); this.magY = -0.12;
+    bx(0.012, 0.028, 0.018, 0, 0.105, -0.46, this.red, g); bx(0.02, 0.025, 0.025, 0, 0.09, 0.1, mat, g);
+    hand(mat, 0, -0.15, 0.08, g, [0.45, -0.55, 1]); this.handL = hand(mat, -0.055, -0.17, 0.04, g, [-0.45, -0.7, 1]); this.handLPos = this.handL.position.clone();
+    this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.035, -0.62); g.add(this.muzzle);
+    this.ejectPt = new THREE.Object3D(); this.ejectPt.position.set(0.055, 0.06, -0.06); g.add(this.ejectPt);
+    this.flash = makeFlash(g, 0, 0.035, -0.62, 1);
+  }
+}
+
+export class RPG extends Gun {
+  constructor(ctx) { super(ctx, 'rpg'); this.basePos.set(0.23, -0.23, -0.38); }
+  build() {
+    const g = this.root, mat = this.mat, dark = this.dark;
+    cyl(0.105, 1.25, 0, 0.02, -0.18, mat, g); cyl(0.14, 0.22, 0, 0.02, -0.86, dark, g); cyl(0.13, 0.22, 0, 0.02, 0.5, dark, g);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.32, 8), mat); cone.rotation.x = -Math.PI / 2; cone.position.set(0, 0.02, -1.12); g.add(cone);
+    this.magMesh = bx(0.04, 0.04, 0.04, 0, -0.02, 0.35, dark, g); this.magY = -0.02;
+    frame(0.08, 0.075, 0.012, 0.025, 0, 0.14, -0.35, dark, g); bx(0.055, 0.16, 0.07, 0, -0.13, -0.12, dark, g).rotation.x = 0.22;
+    hand(mat, 0.03, -0.14, -0.1, g, [0.45, -0.6, 1]); this.handL = hand(mat, -0.06, -0.09, -0.58, g, [-0.35, -0.9, 0.9]); this.handLPos = this.handL.position.clone();
+    this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.02, -1.3); g.add(this.muzzle);
+    this.ejectPt = new THREE.Object3D(); this.ejectPt.position.set(0, 0, 0.5); g.add(this.ejectPt);
+    this.flash = makeFlash(g, 0, 0.02, -1.3, 1);
+  }
+  fire(st) {
+    const ctx = this.ctx, P = ctx.player; this.fireT = this.interval; this.mag--;
+    this.muzzle.getWorldPosition(_v); _v2.copy(P.aimDir(st.aim ? this.adsSpread : this.spread));
+    P.launchRocket(_v.clone(), _v2.clone());
+    this.flash.visible = true; this.flashT = 0.08; this.flash.rotation.z = rand(0, TAU); this.flash.scale.setScalar(this.flashScale * rand(0.9, 1.25));
+    ctx.effects.strokeBurst(_v, INK.ORANGE, 14, 12, { life: 0.16, size: 0.05, gravity: 0, drag: 5 }); ctx.effects.smoke(_v, _v2, 5);
+    const k = this.modelKick; this.recoil.kick(rand(-k[0], k[0]), rand(k[1] * 0.4, k[1]), k[2]); this.recoilRot.kick(k[3], rand(-k[4], k[4]), rand(-k[5], k[5]));
+    P.recoil(this.camKick[0] * (st.aim ? 0.75 : 1), rand(-this.camKick[1], this.camKick[1])); P.kickFov(this.fovKick);
+    audio.rpg(); ctx.input.rumble(0.85, 0.95, 150); ctx.effects.shakeAmt += 0.18;
+    if (this.mag === 0) setTimeout(() => { if (this.mag === 0 && !this.reloading) this.startReload(); }, 350);
   }
 }
 

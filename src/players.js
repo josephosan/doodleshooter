@@ -8,14 +8,18 @@ import { buildHumanoid, buildWeaponProp } from './enemies.js';
 import { clamp, damp, angleLerp, wrapAngle } from './util.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
-const WEAPON_KINDS = ['rifle', 'sniper', 'blade'];
+const WEAPON_KINDS = ['rifle', 'sniper', 'katana', 'deagle', 'rpg'];
+const remoteWeaponKind = (value) => {
+  if (typeof value === 'string' && WEAPON_KINDS.includes(value)) return value;
+  const legacy = ['rifle', 'sniper', 'katana']; return legacy[Number(value)] || 'rifle';
+};
 const HIT = [['head', 0.3], ['torso', 0.33], ['hips', 0.2], ['armL', 0.11], ['armR', 0.11], ['foreL', 0.1], ['foreR', 0.1], ['legL', 0.13], ['legR', 0.13], ['shinL', 0.11], ['shinR', 0.11]];
 
 // what a player broadcasts about itself, ~20 times a second:
 // position, look, weapon, state flags, hp, velocity and (while grappling) where the hook is
-export function encodeLocal(P, weaponIndex, extra = {}) {
+export function encodeLocal(P, weaponKind, extra = {}) {
   const b = P.body; const g = P.grapple; const grappling = g && g.state !== 'idle';
-  const out = [+b.pos.x.toFixed(2), +b.pos.y.toFixed(2), +b.pos.z.toFixed(2), +P.yaw.toFixed(2), +P.pitch.toFixed(2), weaponIndex,
+  const out = [+b.pos.x.toFixed(2), +b.pos.y.toFixed(2), +b.pos.z.toFixed(2), +P.yaw.toFixed(2), +P.pitch.toFixed(2), remoteWeaponKind(weaponKind),
     (P.crouching ? 1 : 0) | (P.sliding ? 2 : 0) | (P.isBlocking ? 4 : 0) | (P._aiming ? 8 : 0) | (b.onGround ? 16 : 0) | (extra.firing ? 32 : 0) | (P.alive ? 64 : 0) | (grappling ? 128 : 0) | (P.parryWindow ? 256 : 0) | (extra.idle ? 512 : 0) | (extra.untouched ? 1024 : 0) | (extra.away ? 2048 : 0),
     Math.round(P.hp), +b.vel.x.toFixed(1), +b.vel.y.toFixed(1), +b.vel.z.toFixed(1)];
   if (grappling) out.push(+g.hook.x.toFixed(1), +g.hook.y.toFixed(1), +g.hook.z.toFixed(1));
@@ -25,7 +29,7 @@ export function encodeLocal(P, weaponIndex, extra = {}) {
 export class RemotePlayer {
   constructor(ctx, id, name, team, ink) {
     this.ctx = ctx; this.id = id; this.name = name || 'doodle'; this.team = team; this.ink = ink;
-    this.isLocal = false; this.alive = true; this.parryWindow = false; this.idle = false; this.idleSince = 0; this.untouched = false; this.away = false; this.hp = 100; this.maxHp = 100; this.speed = 0; this.weaponIndex = 0;
+    this.isLocal = false; this.alive = true; this.parryWindow = false; this.idle = false; this.idleSince = 0; this.untouched = false; this.away = false; this.hp = 100; this.maxHp = 100; this.speed = 0; this.weaponIndex = 0; this.weaponKind = 'rifle';
     this.body = { pos: new THREE.Vector3(0, -50, 0), vel: new THREE.Vector3(), halfW: 0.35, height: 1.75, onGround: true };
     this.center = new THREE.Vector3(); this.eye = new THREE.Vector3(); this.forward = new THREE.Vector3(0, 0, -1); this.right = new THREE.Vector3(1, 0, 0);
     this.yaw = 0; this.pitch = 0; this.crouching = false; this.sliding = false; this.blocking = false; this.aiming = false; this.firing = false;
@@ -70,10 +74,10 @@ export class RemotePlayer {
   }
   get isBlocking() { return this.blocking; }
   get blockRadius() { return 0; }
-  setWeapon(i) {
-    if (i === this.weaponIndex && this.J.gun.children.length) return; this.weaponIndex = i;
+  setWeapon(value) {
+    const kind = remoteWeaponKind(value); if (kind === this.weaponKind && this.J.gun.children.length) return; this.weaponKind = kind; this.weaponIndex = WEAPON_KINDS.indexOf(kind);
     const gun = this.J.gun; while (gun.children.length) gun.remove(gun.children[0]);
-    buildWeaponProp(gun, this.mat, this.solid, { weapon: WEAPON_KINDS[i] || 'rifle' });
+    buildWeaponProp(gun, this.mat, this.solid, { weapon: kind === 'katana' ? 'blade' : kind });
   }
   push(snap, t) {
     if (!snap) return;
@@ -90,7 +94,7 @@ export class RemotePlayer {
     if (this.root && this.away) this.root.visible = false;
   }
   // damage dealt to this player by the host's bots or by another player's shot goes to its owner
-  takeDamage(amount, fromPos) { if (this.onDamage) this.onDamage(this, amount, fromPos); }
+  takeDamage(amount, fromPos, meta) { if (this.onDamage) this.onDamage(this, amount, fromPos, meta); }
   knockback() { /* the owner's client applies its own physics */ }
   tryBlockMelee(e) {
     if (!this.alive || !this.blocking) return false;
@@ -143,7 +147,7 @@ export class RemotePlayer {
     if (!b.onGround) { J.legL.rotation.x = -0.5; J.legR.rotation.x = 0.6; J.shinL.rotation.x = 1.0; J.shinR.rotation.x = 0.5; }
     // guns are carried up and forward, two hands on them, tilting with where they look; the
     // blade hangs at the side until it is raised to guard
-    const blade = this.weaponIndex === WEAPON_KINDS.length - 1; const aim = blade ? 0 : (this.aiming ? 1 : sp > 6.5 ? 0.8 : 0.95);
+    const blade = this.weaponKind === 'katana'; const aim = blade ? 0 : (this.aiming ? 1 : sp > 6.5 ? 0.8 : 0.95);
     const look = clamp(this.pitch, -1.1, 1.1);
     if (blade) {
       const g = this.blocking ? 1 : 0;

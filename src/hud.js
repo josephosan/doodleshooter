@@ -104,7 +104,7 @@ export const CONTROLS_HTML = `
     <div><b>G</b> grenade · hold it to throw further</div>
     <div><b>Tab</b> scoreboard (online) &nbsp; <b>Esc</b> pause</div>
     <div><b>Both mouse buttons</b> dash-slash once the gauge is lit</div>
-    <div><b>1-3 / wheel</b> rifle · sniper · katana</div>
+    <div><b>1-5 / wheel</b> your enabled weapons in your chosen slot order</div>
   </div>
   <div><div class="colhead">PS5 CONTROLLER</div>
     <div><b>L stick</b> move &nbsp; <b>R stick</b> look &nbsp; <b>L3</b> sprint</div>
@@ -114,6 +114,7 @@ export const CONTROLS_HTML = `
     <div><b>L2 + R2</b> dash-slash once the katana gauge is lit</div>
     <div><b>R1</b> quick katana slash, then back to your gun</div>
     <div><b>□</b> reload &nbsp; <b>△</b> next weapon</div>
+    <div><b>Settings</b> enable guns and reorder their number slots</div>
     <div><b>R3 / d-pad up</b> grenade · hold to throw further</div>
     <div><b>Create</b> scoreboard (online) &nbsp; <b>Options</b> pause</div>
   </div>

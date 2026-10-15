@@ -60,6 +60,8 @@ class Sfx {
   remoteShot(kind, pos) {
     if (kind === 'shotgun') { this.noise({ dur: 0.32, gain: 1.0, type: 'lowpass', freq: 1600, freqEnd: 150, pos }); this.tone({ freq: 95, freqEnd: 30, dur: 0.26, gain: 0.7, type: 'triangle', pos }); }
     else if (kind === 'sniper') { this.noise({ dur: 0.4, gain: 1.0, type: 'bandpass', freq: 750, freqEnd: 120, q: 0.5, pos }); this.tone({ freq: 420, freqEnd: 50, dur: 0.32, gain: 0.5, type: 'sawtooth', pos }); }
+    else if (kind === 'rpg') this.rpg(pos);
+    else if (kind === 'deagle') { this.noise({ dur: 0.24, gain: 0.95, type: 'bandpass', freq: 900, freqEnd: 150, q: 0.6, pos }); this.tone({ freq: 220, freqEnd: 38, dur: 0.22, gain: 0.65, type: 'sawtooth', pos }); }
     else { this.noise({ dur: 0.16, gain: 0.85, type: 'bandpass', freq: rand(1000, 1500), freqEnd: 220, q: 0.8, pos }); this.noise({ dur: 0.05, gain: 0.4, type: 'highpass', freq: 2600, pos }); this.tone({ freq: 200, freqEnd: 50, dur: 0.12, gain: 0.45, type: 'square', pos }); }
   }
   enemyShot(pos) {
@@ -142,6 +144,10 @@ class Sfx {
   revolver() {
     this.noise({ dur: 0.22, gain: 0.85, type: 'bandpass', freq: 900, freqEnd: 180, q: 0.6 }); this.noise({ dur: 0.05, gain: 0.6, type: 'highpass', freq: 3000 });
     this.tone({ freq: 200, freqEnd: 35, dur: 0.22, gain: 0.7, type: 'sawtooth' }); this.tone({ freq: 2600, freqEnd: 900, dur: 0.12, gain: 0.12, type: 'sine' });
+  }
+  rpg(pos = null) {
+    this.noise({ dur: 0.42, gain: 1, type: 'lowpass', freq: 1300, freqEnd: 90, pos }); this.noise({ dur: 0.16, gain: 0.65, type: 'highpass', freq: 2600, pos });
+    this.tone({ freq: 130, freqEnd: 28, dur: 0.38, gain: 0.82, type: 'sawtooth', pos });
   }
   sniperFire() {
     this.noise({ dur: 0.45, gain: 0.95, type: 'bandpass', freq: 1400, freqEnd: 90, q: 0.5 });

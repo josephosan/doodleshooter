@@ -9,7 +9,7 @@ import { buildLevel, LEVELS } from './level.js';
 import { NavGrid } from './nav.js';
 import { Effects } from './effects.js';
 import { EnemyManager, BOSSES } from './enemies.js';
-import { Player } from './player.js';
+import { Player, WEAPON_ORDER, WEAPON_NAMES } from './player.js';
 import { RemotePlayer, encodeLocal } from './players.js';
 import { Net } from './net.js';
 import { HUD, CONTROLS_HTML } from './hud.js';
@@ -57,10 +57,23 @@ const FFA_COLORS = [
 const ffaColor = (id) => FFA_COLORS.find((c) => c.id === id) || FFA_COLORS[0];
 const validFfaColor = (id) => FFA_COLORS.some((c) => c.id === id);
 let myColor = validFfaColor(localStorage.getItem('doodle_ffa_color')) ? localStorage.getItem('doodle_ffa_color') : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id;
-const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1' };
+const GUN_KINDS = WEAPON_ORDER.filter((kind) => kind !== 'katana');
+function storedWeaponOrder() {
+  try { const raw = JSON.parse(localStorage.getItem('doodle_weapon_order') || '[]'); if (Array.isArray(raw)) { const clean = [...new Set(raw)].filter((kind) => WEAPON_ORDER.includes(kind)); for (const kind of WEAPON_ORDER) if (!clean.includes(kind)) clean.push(kind); return clean; } } catch (error) { /* use defaults */ }
+  return [...WEAPON_ORDER];
+}
+function storedEnabledWeapons() {
+  try { const saved = localStorage.getItem('doodle_enabled_weapons'); if (saved !== null) { const raw = JSON.parse(saved); if (Array.isArray(raw)) return GUN_KINDS.filter((kind) => raw.includes(kind)); } } catch (error) { /* use defaults */ }
+  return [...GUN_KINDS];
+}
+const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1', weaponOrder: storedWeaponOrder(), enabledWeapons: storedEnabledWeapons() };
 function applySettings() {
   input.mouseSens = 0.0022 * settings.sens / 100; input.padSensX = 3.4 * settings.sens / 100; input.padSensY = 2.6 * settings.sens / 100; input.invertY = settings.invert;
   localStorage.setItem('doodle_sens', String(settings.sens)); localStorage.setItem('doodle_invert', settings.invert ? '1' : '0');
+}
+function applyLoadoutSettings() {
+  localStorage.setItem('doodle_weapon_order', JSON.stringify(settings.weaponOrder)); localStorage.setItem('doodle_enabled_weapons', JSON.stringify(settings.enabledWeapons));
+  if (ctx.player) ctx.player.setLoadout(settings.weaponOrder, settings.enabledWeapons);
 }
 // ---------------- game state ----------------
 const TEAM_TARGET = 20, MATCH_TIME = 600, RESPAWN = 2.5;
@@ -83,6 +96,7 @@ const online = () => game.mode === 'team' || game.mode === 'ffa';
 const teamMode = () => game.mode === 'team';
 const enemies = ctx.enemies = new EnemyManager(ctx);
 const player = ctx.player = new Player(ctx);
+applyLoadoutSettings();
 player.name = myName; player.color = myColor;
 function syncAccountUser() {
   if (!account.user) return;
@@ -200,7 +214,7 @@ function breakProp(br, dir, local, quiet = false) {
 // every ray a gun fires this tick is sent to the others, who draw it as a tracer from the shooter's gun
 const shotQueue = [];
 ctx.onShot = (end) => { if (net.active && inMatch()) shotQueue.push(+end.x.toFixed(1), +end.y.toFixed(1), +end.z.toFixed(1)); };
-const TRACER_THICK = { rifle: 0.02, shotgun: 0.014, sniper: 0.03 };
+const TRACER_THICK = { rifle: 0.02, deagle: 0.028, shotgun: 0.014, sniper: 0.03 };
 const _sm = new THREE.Vector3(), _se = new THREE.Vector3();
 
 // ---------------- pickups ----------------
@@ -332,6 +346,7 @@ enemies.onKill = (e, info, over) => {
 };
 enemies.onBoss = (e) => { if (!e.alive) { hud.setBoss(null, null); game.boss = null; } else { game.boss = e; hud.setBoss(e.T.name, e.hp / e.maxHp); } };
 player.onThrow = (d) => { if (net.active) net.broadcast('nade', d); };
+player.onRocket = (d) => { if (net.active) net.broadcast('rocket', d); };
 
 // ---------------- focus slash (solo only) ----------------
 const FOCUS_TIME = 2.6, FOCUS_SCALE = 0.26, FOCUS_RANGE = 24, FOCUS_MAX_CHAIN = 2, FOCUS_ARM = 0.18, DASH_SPEED = 46, KATANA_CHARGE_KILLS = 3;
@@ -398,7 +413,7 @@ function updateFocus(dt) {
 }
 
 // ---------------- team deathmatch: spawning, death, scoring ----------------
-const HOW = { rifle: 'rifle', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
+const HOW = { rifle: 'rifle', deagle: 'desert eagle', rpg: 'rpg', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
 const howWord = (src) => HOW[src] || null;
 const spawnSpots = () => (level.arenaSpawns && level.arenaSpawns.length ? level.arenaSpawns : level.spawns);
 function arenaSpawn() {
@@ -509,7 +524,7 @@ function addRemote(id, name, team, color) {
   const assigned = validTeam(team) ? team : TEAM_RED, picked = validFfaColor(color) ? color : FFA_COLORS[0].id, ink = avatarInk(assigned, picked);
   if (remote.has(id)) { const r = remote.get(id); r.name = name; r.team = assigned; r.color = picked; r.setColor(ink); return r; }
   const rp = new RemotePlayer(ctx, id, name, assigned, ink); rp.color = picked;
-  rp.onDamage = (t, amount, fromPos) => { if (!ctx.canHurt(t) || !t.alive) return; hud.hitmarker(false, false); net.sendTo(t.id, 'pdmg', { amount: Math.round(amount), from: fromPos ? fromPos.toArray().map((v) => +v.toFixed(1)) : null, by: net.id, src: 'grenade' }); };
+  rp.onDamage = (t, amount, fromPos, meta = {}) => { if (!ctx.canHurt(t) || !t.alive) return; hud.hitmarker(false, false); net.sendTo(t.id, 'pdmg', { amount: Math.round(amount), from: fromPos ? fromPos.toArray().map((v) => +v.toFixed(1)) : null, by: net.id, src: meta.src || 'grenade' }); };
   remote.set(id, rp); return rp;
 }
 function removeRemote(id) { const r = remote.get(id); if (r) { r.dispose(); remote.delete(id); } lobby.players.delete(id); scores.delete(id); }
@@ -635,6 +650,7 @@ net.on('pdead', (d, from) => {
   if (net.isHost) tallyDeath(from, d.killer);
 });
 net.on('nade', (d, from) => player.throwGrenade({ ...d, team: teamOf(from) }));
+net.on('rocket', (d, from) => player.launchRocket(null, null, { ...d, owner: from, team: teamOf(from) }));
 net.on('brk', (d) => { const br = level.breakables[d.id]; if (br) breakProp(br, null, false); });
 net.on('parry', (d) => { audio.shieldHit(player.center); input.rumble(0.35, 0.3, 60); effects.strokeBurst(player.eye.clone().addScaledVector(player.forward, 0.5), INK.ORANGE, 8, 5, { life: 0.2, size: 0.03 }); hud.kill(d.ret ? 'RETURN TO SENDER' : 'DEFLECTED', d.ret ? 25 : 0); });
 net.on('shots', (d, from) => {
@@ -680,7 +696,7 @@ function netUpdate(dt) {
   for (const r of remote.values()) r.update(dt, now);
   // a connection that died without saying so leaves a figure standing around: drop anyone silent too long
   if (inMatch() && !migrating) for (const [id, r] of remote) { if (r.lastSeen && performance.now() - r.lastSeen > 9000) { if (!net.isHost && id === net.hostId) { net.leave(); migrateHost(); break; } const nm = r.name; removeRemote(id); hud.kill(nm + ' lost connection', 0); if (net.isHost) { const c = net.conns.get(id); if (c) { try { c.close(); } catch (e) { /* ignore */ } net.conns.delete(id); } net.send('leave', { id }); broadcastLobby(); sendScores(); } } }
-  if (syncTick % 3 === 0 && inMatch()) net.send('ps', encodeLocal(player, player.weaponIndex, { firing: player.firing, idle: input.idleSeconds > IDLE_FLAG }), true);
+  if (syncTick % 3 === 0 && inMatch()) net.send('ps', encodeLocal(player, player.weapon.kind, { firing: player.firing, idle: input.idleSeconds > IDLE_FLAG }), true);
   if (shotQueue.length) net.broadcast('shots', { k: player.weapon.kind, e: shotQueue.splice(0) });
   if (net.isHost && inMatch() && remote.size > 0) game.clockStarted = true;
   const clockOn = inMatch() && !game.over && (net.isHost ? !!game.clockStarted : clockRunning);
@@ -743,11 +759,21 @@ function friendlyError(err) {
 function setStatus(t) { lobby.status = t; const el = hud.el.panel.querySelector('#status'); if (el) el.textContent = t; }
 
 // ---------------- screens ----------------
+function loadoutHTML() {
+  const enabled = new Set(settings.enabledWeapons); let activeSlot = 0;
+  const rows = settings.weaponOrder.map((kind, i) => { const active = kind === 'katana' || enabled.has(kind); if (active) activeSlot++; return `<div class="loadoutrow${active ? '' : ' off'}" data-weapon="${kind}">
+    <span class="slotnum">${active ? activeSlot : '—'}</span><strong>${WEAPON_NAMES[kind]}</strong>
+    <label><input type="checkbox" data-weapon-toggle="${kind}" ${kind === 'katana' || enabled.has(kind) ? 'checked' : ''} ${kind === 'katana' ? 'disabled' : ''}> ${kind === 'katana' ? 'always on' : 'enabled'}</label>
+    <span class="loadoutmove"><button type="button" data-weapon-move="-1" aria-label="Move ${WEAPON_NAMES[kind]} up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-weapon-move="1" aria-label="Move ${WEAPON_NAMES[kind]} down" ${i === settings.weaponOrder.length - 1 ? 'disabled' : ''}>↓</button></span>
+  </div>`; }).join('');
+  return `<div class="loadout"><div class="loadouttitle">WEAPON LOADOUT <small>enable guns and arrange their active 1–5 slot order</small></div>${rows}</div>`;
+}
 function settingsHTML() {
   return `<div class="settings" id="settings">
     <label>look sensitivity <input type="range" id="setSens" min="25" max="250" step="5" value="${settings.sens}"><b id="setSensV">${settings.sens}%</b></label>
     <label><input type="checkbox" id="setInv" ${settings.invert ? 'checked' : ''}> invert vertical look</label>
     <label><input type="checkbox" id="setMus" ${musicWanted ? 'checked' : ''}> music <span class="k">(M)</span></label>
+    ${loadoutHTML()}
   </div>`;
 }
 function wireSettings() {
@@ -757,6 +783,15 @@ function wireSettings() {
   sens.addEventListener('input', () => { settings.sens = Number(sens.value); out.textContent = settings.sens + '%'; applySettings(); });
   box.querySelector('#setInv').addEventListener('change', (e) => { settings.invert = e.target.checked; applySettings(); });
   box.querySelector('#setMus').addEventListener('change', (e) => { musicWanted = e.target.checked; localStorage.setItem('doodle_music', musicWanted ? '1' : '0'); audio.musicOn(musicWanted); });
+  box.addEventListener('change', (e) => {
+    const toggle = e.target.closest('[data-weapon-toggle]'); if (!toggle || toggle.disabled) return;
+    const kind = toggle.dataset.weaponToggle; settings.enabledWeapons = toggle.checked ? [...new Set([...settings.enabledWeapons, kind])] : settings.enabledWeapons.filter((k) => k !== kind); applyLoadoutSettings(); const editor = box.querySelector('.loadout'); if (editor) editor.outerHTML = loadoutHTML();
+  });
+  box.addEventListener('click', (e) => {
+    const move = e.target.closest('[data-weapon-move]'); if (!move || move.disabled) return;
+    const row = move.closest('[data-weapon]'), from = settings.weaponOrder.indexOf(row.dataset.weapon), to = from + Number(move.dataset.weaponMove); if (from < 0 || to < 0 || to >= settings.weaponOrder.length) return;
+    [settings.weaponOrder[from], settings.weaponOrder[to]] = [settings.weaponOrder[to], settings.weaponOrder[from]]; applyLoadoutSettings(); const editor = box.querySelector('.loadout'); if (editor) editor.outerHTML = loadoutHTML();
+  });
 }
 function wireName(box) {
   const nb = box.querySelector('#setName'); if (!nb) return;

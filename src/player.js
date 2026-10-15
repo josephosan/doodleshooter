@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { makeBody } from './physics.js';
 import { makeInkMaterial, INK } from './render.js';
-import { Rifle, Sniper, Katana } from './weapons.js';
+import { Rifle, Sniper, DesertEagle, RPG, Katana } from './weapons.js';
 // the dome shell and anything else flagged this way cannot be hooked
 const NO_GRAPPLE = (b) => !!b.data.noGrapple;
 const STAM_FIRE = 0.09, STAM_DRAIN = 0.08, STAM_GROUND = 0.4, STAM_AIR = 0.2, STAM_MIN = 0.18, STAM_PAUSE = 0.5, PARRY_WINDOW = 0.55;
@@ -12,6 +12,8 @@ import { audio } from './audio.js';
 const G = 26, WALK = 6.6, SPRINT = 10.6, CROUCH = 3.6, ACCEL = 140, FRICTION = 8, AIR_ACCEL = 36, AIR_CAP = 7.5, JUMP = 9.6;
 const STAND_H = 1.75, CROUCH_H = 1.05, EYE_STAND = 1.6, EYE_CROUCH = 0.88;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _d = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+export const WEAPON_ORDER = ['rifle', 'deagle', 'sniper', 'rpg', 'katana'];
+export const WEAPON_NAMES = { rifle: 'RIFLE', deagle: 'DESERT EAGLE', sniper: 'SNIPER', rpg: 'RPG', katana: 'KATANA' };
 
 export class Player {
   constructor(ctx) {
@@ -21,8 +23,9 @@ export class Player {
     this.eye = new THREE.Vector3(); this.center = new THREE.Vector3(); this.forward = new THREE.Vector3(0, 0, -1); this.right = new THREE.Vector3(1, 0, 0);
     this.speed = 0; this.hurtFx = 0; this.flashFx = 0; this.lastDamageT = 10;
     this.rig = new THREE.Group(); this.camera.add(this.rig); ctx.scene.add(this.camera);
-    this.weapons = [new Rifle(ctx), new Sniper(ctx), new Katana(ctx)]; this.katanaIndex = 2;
-    for (const w of this.weapons) { this.rig.add(w.root); if (w.isGun) w.startReserve = w.reserve; }
+    this.weaponByKind = new Map([['rifle', new Rifle(ctx)], ['deagle', new DesertEagle(ctx)], ['sniper', new Sniper(ctx)], ['rpg', new RPG(ctx)], ['katana', new Katana(ctx)]]);
+    this.weapons = WEAPON_ORDER.map((kind) => this.weaponByKind.get(kind)); this.katanaIndex = this.weapons.findIndex((w) => w.kind === 'katana');
+    for (const w of this.weaponByKind.values()) { this.rig.add(w.root); if (w.isGun) w.startReserve = w.reserve; }
     this.weaponIndex = 0; this.weapon = this.weapons[0]; this.weapon.equip(); this.returnT = 0; this.prevWeaponIndex = 0;
     this.recoilPitch = new Spring(190, 17); this.recoilYaw = new Spring(190, 17); this.fovKick = new Spring(220, 14); this.landDip = new Spring(170, 15);
     this.roll = 0; this.fov = 82; this.bobPhase = 0; this.bobAmt = 0; this.stepDist = 0; this.eyeH = EYE_STAND;
@@ -30,7 +33,7 @@ export class Player {
     this.dashCd = 0; this.airJumps = 1; this.blockCd = 0; this.landGraceT = 0; this.sprintToggle = false; this.lastGround = true; this.airT = 0; this._sprinting = false; this._aiming = false; this._mv = { x: 0, y: 0 };
     this.grapple = { state: 'idle', anchor: new THREE.Vector3(), hook: new THREE.Vector3(), from: new THREE.Vector3(), flyT: 0, flyDur: 0, len: 0, cd: 0, enemy: null, mover: null, blockedT: 0, t: 0, swingT: 0, hopT: 0 };
     this.deathT = 0; this.gravityScale = 1; this.dashLock = false;
-    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.nadeCd = 0; this.firing = false; this.onThrow = null;
+    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.rockets = []; this.nadeCd = 0; this.firing = false; this.onThrow = null; this.onRocket = null;
     const rm = makeInkMaterial({ ink: INK.BLUE, fill: false, shadeBias: -0.3 });
     this.rope = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6), rm); this.rope.visible = false; ctx.scene.add(this.rope);
     const hm = makeInkMaterial({ ink: INK.BLUE }); this.hookMesh = new THREE.Group();
@@ -42,10 +45,11 @@ export class Player {
     const b = this.body; b.pos.copy(pos); b.vel.set(0, 0, 0); b.onGround = false; b.height = STAND_H;
     this.hp = this.maxHp; this.alive = true; this.yaw = 0; this.pitch = 0; this.roll = 0; this.hurtFx = 0; this.flashFx = 0; this.crouching = false; this.sliding = false; this.deathT = 0; this.lastDamageT = 10; this.dashCd = 0; this.airJumps = 1; this.gravityScale = 1; this.dashLock = false;
     this.detachGrapple(false);
-    for (const w of this.weapons) if (w.isGun) { w.mag = w.magSize; w.reserve = w.startReserve; w.reloading = false; w.pumpT = 0; }
-    this.switchTo(0, true); this.rig.visible = true; this.eyeH = EYE_STAND; this.grenades = 3; this.clearNades();
+    for (const w of this.weaponByKind.values()) if (w.isGun) { w.mag = w.magSize; w.reserve = w.startReserve; w.reloading = false; w.pumpT = 0; }
+    this.switchTo(0, true); this.rig.visible = true; this.eyeH = EYE_STAND; this.grenades = 3; this.clearNades(); this.clearRockets();
   }
   clearNades() { for (const n of this.nades) this.ctx.scene.remove(n.mesh); this.nades.length = 0; }
+  clearRockets() { for (const r of this.rockets) this.ctx.scene.remove(r.mesh); this.rockets.length = 0; }
   get isBlocking() { return this.weapon.kind === 'katana' && this.weapon.blocking; }
   aimDir(spread = 0) { const d = this.forward.clone(); if (spread > 0) { d.addScaledVector(this.right, rand(-spread, spread)); d.y += rand(-spread, spread); d.normalize(); } return d; }
   recoil(p, y) { this.pitch = clamp(this.pitch + p * 0.55, -1.5, 1.5); this.recoilPitch.kick(p * 22); this.recoilYaw.kick(y * 30); }
@@ -61,7 +65,18 @@ export class Player {
     this.weapon.unequip(); this.weaponIndex = i; this.weapon = this.weapons[i]; this.weapon.equip(); if (!silent) audio.switchWeapon();
     this.ctx.hud.setWeapon(this.weapon.name, this.weapon.hint); this.ctx.hud.setCrosshairMode(this.weapon.kind === 'katana' ? 'katana' : '');
   }
-  addAmmoAll(frac = 0.5) { for (const w of this.weapons) if (w.isGun) w.addAmmo(Math.round(w.maxReserve * frac)); }
+  setLoadout(order, enabled) {
+    const before = this.weapon && this.weapon.kind; const clean = [...new Set(order)].filter((kind) => this.weaponByKind.has(kind));
+    for (const kind of WEAPON_ORDER) if (!clean.includes(kind)) clean.push(kind);
+    const allowed = new Set(enabled); allowed.add('katana');
+    const next = clean.filter((kind) => allowed.has(kind)).map((kind) => this.weaponByKind.get(kind));
+    if (!next.length) next.push(this.weaponByKind.get('katana'));
+    for (const w of this.weaponByKind.values()) w.root.visible = false;
+    this.weapons = next; this.katanaIndex = this.weapons.findIndex((w) => w.kind === 'katana');
+    const selected = Math.max(0, this.weapons.findIndex((w) => w.kind === before)); this.weaponIndex = selected; this.weapon = this.weapons[selected]; this.weapon.equip();
+    this.prevWeaponIndex = Math.min(this.prevWeaponIndex, this.weapons.length - 1); this.ctx.hud.setWeapon(this.weapon.name, this.weapon.hint); this.ctx.hud.setCrosshairMode(this.weapon.kind === 'katana' ? 'katana' : '');
+  }
+  addAmmoAll(frac = 0.5) { for (const w of this.weaponByKind.values()) if (w.isGun) w.addAmmo(w.kind === 'rpg' ? 1 : Math.round(w.maxReserve * frac)); }
   takeDamage(amount, fromPos) {
     if (!this.alive) return;
     this.hp -= amount; this.lastDamageT = 0; this.hurtFx = Math.min(1, this.hurtFx + amount / 40);
@@ -220,7 +235,7 @@ export class Player {
     if (inp.down('grenade') && this.grenades > 0 && this.nadeCd <= 0 && this.alive && !this.dashLock) { this.nadeCharge = Math.min(1, this.nadeCharge + dt / 1.1); this._nadeHeld = true; }
     else if (this._nadeHeld) { this._nadeHeld = false; if (this.grenades > 0 && this.nadeCd <= 0 && this.alive) this.throwGrenade(null, this.nadeCharge); this.nadeCharge = 0; }
     this.updateNadeArc(this._nadeHeld ? this.nadeCharge : -1);
-    this.updateNades(dt);
+    this.updateNades(dt); this.updateRockets(dt);
     // ---- weapons ----
     for (let i = 0; i < 5; i++) if (inp.pressed('slot' + (i + 1))) this.switchTo(Math.min(i, this.weapons.length - 1));
     if (inp.pressed('nextWeapon')) this.switchTo((this.weaponIndex + 1) % this.weapons.length);
@@ -306,7 +321,43 @@ export class Player {
     const hostile = n.mine || !ctx.teamMode || !ctx.teamMode() || !Number.isInteger(n.ownerTeam) || n.ownerTeam !== this.team;
     if (hostile && this.alive && d < R * 0.95) { this.takeDamage(10 + 34 * (1 - d / (R * 0.95)), c); this.knockback(_v.subVectors(this.center, c).normalize(), 9); }
     // other players in a versus match, decided by the thrower only
-    if (n.mine && ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const dd = t.center.distanceTo(c); if (dd < R * 0.95) t.takeDamage(12 + 50 * (1 - dd / (R * 0.95)), c); }
+    if (n.mine && ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const dd = t.center.distanceTo(c); if (dd < R * 0.95) t.takeDamage(12 + 50 * (1 - dd / (R * 0.95)), c, { src: 'grenade' }); }
+  }
+  launchRocket(pos, dir, remote = null) {
+    const ctx = this.ctx; const mine = !remote;
+    if (remote) { pos = new THREE.Vector3().fromArray(remote.pos); dir = new THREE.Vector3().fromArray(remote.dir).normalize(); audio.remoteShot('rpg', pos); }
+    else if (this.onRocket) this.onRocket({ pos: pos.toArray().map((v) => +v.toFixed(2)), dir: dir.toArray().map((v) => +v.toFixed(3)) });
+    const g = new THREE.Group(), shell = makeInkMaterial({ ink: mine ? INK.BLUE : INK.RED }), dark = makeInkMaterial({ ink: INK.BLACK });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.55, 8), shell); g.add(body);
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.23, 8), shell); nose.position.y = 0.39; g.add(nose);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.2, 6), dark); tail.position.y = -0.35; tail.rotation.x = Math.PI; g.add(tail);
+    g.position.copy(pos); g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); ctx.scene.add(g);
+    this.rockets.push({ mesh: g, pos: pos.clone(), vel: dir.clone().multiplyScalar(38), mine, owner: remote && remote.owner, ownerTeam: remote && remote.team, life: 4, trail: 0 });
+  }
+  updateRockets(dt) {
+    const ctx = this.ctx, world = ctx.world;
+    for (let i = this.rockets.length - 1; i >= 0; i--) {
+      const r = this.rockets[i]; r.life -= dt; r.trail -= dt; _v2.copy(r.pos); r.pos.addScaledVector(r.vel, dt); _d.subVectors(r.pos, _v2); const len = _d.length(); let impact = null;
+      if (len > 1e-6) {
+        _d.divideScalar(len); const hitW = world.raycast(_v2, _d, len + 0.18); if (hitW) impact = { dist: hitW.dist, point: hitW.point };
+        if (r.mine) {
+          const hitE = ctx.enemies.raycast(_v2, _d, len + 0.18); if (hitE && (!impact || hitE.dist < impact.dist)) impact = { dist: hitE.dist, point: hitE.point };
+          const hitP = ctx.raycastPlayers ? ctx.raycastPlayers(_v2, _d, len + 0.18) : null; if (hitP && (!impact || hitP.dist < impact.dist)) impact = { dist: hitP.dist, point: hitP.point };
+        }
+      }
+      if (impact || r.life <= 0) {
+        if (impact) r.pos.copy(impact.point); this.explodeRocket(r); ctx.scene.remove(r.mesh); this.rockets.splice(i, 1); continue;
+      }
+      r.mesh.position.copy(r.pos); r.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), _v.copy(r.vel).normalize());
+      if (r.trail <= 0) { r.trail = 0.055; ctx.effects.smoke(r.pos, _v.copy(r.vel).normalize().negate(), 1); ctx.effects.strokeBurst(r.pos, INK.ORANGE, 2, 2.5, { life: 0.12, size: 0.025, gravity: 0, drag: 5 }); }
+    }
+  }
+  explodeRocket(r) {
+    const ctx = this.ctx, radius = 7.2, c = r.pos.clone(); ctx.effects.boom(c, radius); audio.explosion(c); ctx.input.rumble(1, 1, 260);
+    if (!r.mine) return;
+    ctx.enemies.blastEnemies(c, radius, 175, null); if (ctx.blastBreakables) ctx.blastBreakables(c, radius);
+    const selfDist = this.center.distanceTo(c); if (this.alive && selfDist < radius * 0.82) { this.takeDamage(16 + 56 * (1 - selfDist / (radius * 0.82)), c); this.knockback(_v.subVectors(this.center, c).normalize(), 13); }
+    if (ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const d = t.center.distanceTo(c); if (d < radius) t.takeDamage(42 + 78 * (1 - d / radius), c, { src: 'rpg' }); }
   }
   _weaponState(sprinting, aiming, hs) {
     const inp = this.ctx.input, b = this.body;

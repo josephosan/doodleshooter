@@ -956,6 +956,10 @@ function buildTehran(B, arena = false) {
   slab(-29, -29, 29, 29, 0.16, 0.18, { ink: GLASS });
   for (const [x, z] of [[-24, -24], [24, -24], [-24, 24], [24, 24]]) { cyl(x, 0, z, 0.45, 9, { ink: ASPHALT }); ring(x, 11, z, 'y'); }
   cyl(0, 0, 0, 4.8, 55, { ink: GLASS, seg: 18 });
+  // `cyl` uses a deliberately loose navigation box; the tower needs exact full-width
+  // blockers so a player can never slip through the curved shell and see its back faces.
+  const towerSolid = { noNav: true, noGrapple: true, tag: 'milad-solid' };
+  collider(0, 0, 0, 9.8, 55, 9.8, towerSolid);
   for (const h of [12, 24, 36, 48]) { cyl(0, h - 0.25, 0, 6.4, 0.5, { ink: LIGHT, seg: 18 }); ring(0, h + 2, 6.8, 'y'); }
   // The stair tower sits beyond the pod radius; broad landings connect it to the shaft and roof.
   switchbackStairs(0, 0, 18.4, 61, 15, 2.4, 12, { ink: LIGHT });
@@ -964,6 +968,9 @@ function buildTehran(B, arena = false) {
   cyl(0, 52, 0, 12.5, 4, { ink: NEON, seg: 20 });
   cyl(0, 56, 0, 16.5, 3.2, { ink: GLASS, seg: 24 });
   cyl(0, 59.2, 0, 13.8, 2.2, { ink: LIGHT, seg: 22 });
+  collider(0, 52, 0, 25.2, 4, 25.2, towerSolid);
+  collider(0, 56, 0, 33.2, 3.2, 33.2, towerSolid);
+  collider(0, 59.2, 0, 27.8, 2.2, 27.8, towerSolid);
   slab(-3, 10, 3, 20, 61.4, 0.45, { ink: LIGHT });
   for (let i = 0; i < 12; i++) { const a = i * TAU / 12; ring(Math.cos(a) * 14.2, 64, Math.sin(a) * 14.2, 'y'); }
   cyl(0, 61.4, 0, 3.2, 22, { ink: GLASS, seg: 14 });
@@ -992,6 +999,27 @@ function buildTehran(B, arena = false) {
     cityTower(-132, 132, 22, 19, 38), cityTower(-48, 132, 25, 21, 52, LIGHT), cityTower(48, 132, 22, 19, 40), cityTower(132, 132, 24, 20, 48, BRICK)
   ];
 
+  // Dense mid-rise apartment blocks fill the neighbourhoods between the highways.
+  // Their stairs are outside the footprint and finish flush with the open roof.
+  const apartment = (x, z, w, d, h, ink) => {
+    const floors = Math.max(3, Math.round(h / 5));
+    for (const [dx, dz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]]) box(x + dx, 0, z + dz, 0.8, h, 0.8, { ink: ASPHALT });
+    for (let f = 1; f <= floors; f++) {
+      const y = h * f / floors; slab(x - w / 2, z - d / 2, x + w / 2, z + d / 2, y, 0.35, { ink });
+      box(x - w / 2 - 0.8, y - 1.3, z, 1.4, 0.25, d * 0.62, { ink: NEON });
+    }
+    switchbackStairs(x, 0, z + d / 2 + 1, h, w - 3, 1.9, floors, { ink: LIGHT });
+    rail(x - w / 2, z - d / 2, x + w / 2, z - d / 2, h, { ink: ASPHALT });
+    rail(x + w / 2, z - d / 2, x + w / 2, z + d / 2, h, { ink: ASPHALT });
+    ring(x, h + 2.5, z, 'y'); sniper(x, h + 0.45, z);
+    return new THREE.Vector3(x, h + 0.5, z);
+  };
+  for (const args of [
+    [-110, -105, 18, 16, 23, BRICK], [-45, -105, 19, 16, 27, GLASS], [45, -105, 18, 16, 21, NEON], [110, -105, 19, 16, 25, LIGHT],
+    [-110, 105, 19, 16, 26, GLASS], [-45, 105, 18, 16, 22, BRICK], [45, 105, 20, 16, 28, LIGHT], [110, 105, 18, 16, 24, NEON],
+    [-105, -42, 18, 15, 20, NEON], [-105, 42, 18, 15, 24, BRICK], [105, -42, 18, 15, 26, GLASS], [105, 42, 18, 15, 22, LIGHT]
+  ]) roofs.push(apartment(...args));
+
   // Low bazaars, parks, footbridges, traffic gantries and city furniture.
   const bazaar = (x, z, w = 30, d = 24, h = 9, ink = BRICK) => {
     wallX(x - w / 2, x + w / 2, z - d / 2, 0, h, 0.7, [[x - 3, x + 3, 0, 3.4], [x - 11, x - 6, 4.5, 7]], { ink });
@@ -1002,6 +1030,20 @@ function buildTehran(B, arena = false) {
     switchbackStairs(x, 0, z + d / 2 + 0.9, h, w - 5, 2, 3, { ink: LIGHT }); ring(x, h + 2.5, z, 'y');
   };
   for (const [x, z, ink] of [[-45, -45, BRICK], [45, -45, NEON], [-45, 45, LIGHT], [45, 45, BRICK], [-120, 0, NEON], [120, 0, BRICK], [0, -120, LIGHT], [0, 120, GLASS]]) bazaar(x, z, 29, 25, 10, ink);
+
+  // An Azadi-inspired west gateway, with an open arch and a grapple ring under its crown.
+  for (const [z, lean] of [[-8, -0.17], [8, 0.17]]) {
+    const g = new THREE.BoxGeometry(3, 19, 4); g.rotateZ(lean); g.translate(-154, 9.5, z); addGeo(g, GLASS);
+    collider(-154, 0, z, 4.2, 19, 4.2, { noNav: true });
+  }
+  box(-154, 15.5, 0, 8, 4, 17, { ink: GLASS });
+  box(-154, 19.5, 0, 12, 2.4, 20, { ink: LIGHT });
+  ring(-150, 13, 0, 'x'); ring(-154, 24, 0, 'y');
+
+  // The Alborz ridge sits behind the north wall as scenery; it never closes the sky.
+  for (const [x, h, r, ink] of [[-150, 28, 24, GLASS], [-105, 42, 32, ASPHALT], [-55, 34, 29, GLASS], [0, 52, 38, ASPHALT], [55, 37, 30, GLASS], [108, 46, 34, ASPHALT], [154, 30, 25, GLASS]]) {
+    const mountain = new THREE.ConeGeometry(r, h, 5); mountain.rotateY(Math.PI / 5); mountain.translate(x, h / 2, -P + 2); addGeo(mountain, ink);
+  }
   for (const [x, z] of [[-48, 78], [48, 78], [-48, -78], [48, -78], [-78, 48], [-78, -48], [78, 48], [78, -48]]) {
     slab(x - 12, z - 10, x + 12, z + 10, 0.18, 0.18, { ink: PARK });
     for (const [dx, dz] of [[-8, -6], [8, -6], [-8, 6], [8, 6], [0, 0]]) { cyl(x + dx, 0, z + dz, 0.55, 5, { ink: BRICK }); sphere(x + dx, 6.2, z + dz, 2.5, { ink: PARK }); }
@@ -1011,8 +1053,23 @@ function buildTehran(B, arena = false) {
     box(x, y - 8, z, 0.12, 16, 0.12, { noCollide: true, ink: ASPHALT });
   }
   for (const [x, z, alongX] of [[-82, -42, false], [-82, 42, false], [82, -42, false], [82, 42, false], [-42, -82, true], [42, -82, true], [-42, 82, true], [42, 82, true]]) {
-    box(x, 0, z, alongX ? 9 : 3.4, 2.2, alongX ? 3.4 : 9, { ink: NEON });
+    box(x, 0, z, alongX ? 9 : 3.4, 2.2, alongX ? 3.4 : 9, { ink: LIGHT });
     box(x, 2.2, z, alongX ? 4 : 2.8, 1.2, alongX ? 2.8 : 4, { ink: GLASS });
+  }
+
+  // BRT buses, extra yellow taxis, streetlights and bilingual-style road sign silhouettes.
+  const vehicle = (x, z, alongX, bus = false) => {
+    box(x, 0.35, z, alongX ? (bus ? 13 : 6) : 3.2, bus ? 3.2 : 2, alongX ? 3.2 : (bus ? 13 : 6), { ink: bus ? BRICK : LIGHT });
+    box(x + (alongX ? -1 : 0), bus ? 3.55 : 2.35, z + (alongX ? 0 : -1), alongX ? (bus ? 9 : 3) : 2.7, 0.8, alongX ? 2.7 : (bus ? 9 : 3), { ink: GLASS });
+  };
+  for (const args of [[-82, -20, false, true], [-82, 24, false, true], [82, -26, false, true], [82, 22, false, true], [-28, -82, true, true], [30, 82, true, true]]) vehicle(...args);
+  for (const args of [[-58, 0, true], [58, 0, true], [0, -56, false], [0, 58, false], [-120, -82, true], [118, 82, true], [-82, 118, false], [82, -118, false]]) vehicle(...args);
+  for (const [x, z] of [[-70, -70], [70, -70], [-70, 70], [70, 70], [-18, -70], [18, 70], [-70, 18], [70, -18], [-145, -82], [145, 82], [-82, 145], [82, -145]]) {
+    box(x, 0, z, 0.28, 8, 0.28, { noCollide: true, ink: ASPHALT }); sphere(x, 8.3, z, 0.7, { ink: LIGHT });
+  }
+  for (const [x, z, alongX] of [[-82, -65, false], [82, 65, false], [-65, -82, true], [65, 82, true]]) {
+    box(x, 0, z, 0.35, 10, 0.35, { noCollide: true, ink: ASPHALT });
+    box(x, 8, z, alongX ? 9 : 0.5, 3.2, alongX ? 0.5 : 9, { noCollide: true, ink: PARK }); ring(x, 12.5, z, 'y');
   }
 
   // Kites, taxis, metro cars and signs circle the open sky as moving grapple targets.

@@ -31,7 +31,7 @@ server {\n\
         proxy_read_timeout 75s;\n\
     }\n\
     location /api/ {\n\
-        proxy_pass http://api:3000;\n\
+        proxy_pass http://doodleshooter_api:3000;\n\
         proxy_http_version 1.1;\n\
         proxy_set_header Host $host;\n\
         proxy_set_header X-Real-IP $remote_addr;\n\

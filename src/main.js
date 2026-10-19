@@ -58,12 +58,13 @@ const ffaColor = (id) => FFA_COLORS.find((c) => c.id === id) || FFA_COLORS[0];
 const validFfaColor = (id) => FFA_COLORS.some((c) => c.id === id);
 let myColor = validFfaColor(localStorage.getItem('doodle_ffa_color')) ? localStorage.getItem('doodle_ffa_color') : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id;
 const GUN_KINDS = WEAPON_ORDER.filter((kind) => kind !== 'katana');
+const LOADOUT_VERSION = 2;
 function storedWeaponOrder() {
   try { const raw = JSON.parse(localStorage.getItem('doodle_weapon_order') || '[]'); if (Array.isArray(raw)) { const clean = [...new Set(raw)].filter((kind) => WEAPON_ORDER.includes(kind)); for (const kind of WEAPON_ORDER) if (!clean.includes(kind)) clean.push(kind); return clean; } } catch (error) { /* use defaults */ }
   return [...WEAPON_ORDER];
 }
 function storedEnabledWeapons() {
-  try { const saved = localStorage.getItem('doodle_enabled_weapons'); if (saved !== null) { const raw = JSON.parse(saved); if (Array.isArray(raw)) return GUN_KINDS.filter((kind) => raw.includes(kind)); } } catch (error) { /* use defaults */ }
+  try { const saved = localStorage.getItem('doodle_enabled_weapons'); if (saved !== null) { const raw = JSON.parse(saved); if (Array.isArray(raw)) { const chosen = new Set(raw); if (Number(localStorage.getItem('doodle_loadout_version') || 0) < LOADOUT_VERSION) chosen.add('guidedrpg'); return GUN_KINDS.filter((kind) => chosen.has(kind)); } } } catch (error) { /* use defaults */ }
   return [...GUN_KINDS];
 }
 const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1', weaponOrder: storedWeaponOrder(), enabledWeapons: storedEnabledWeapons() };
@@ -72,7 +73,7 @@ function applySettings() {
   localStorage.setItem('doodle_sens', String(settings.sens)); localStorage.setItem('doodle_invert', settings.invert ? '1' : '0');
 }
 function applyLoadoutSettings() {
-  localStorage.setItem('doodle_weapon_order', JSON.stringify(settings.weaponOrder)); localStorage.setItem('doodle_enabled_weapons', JSON.stringify(settings.enabledWeapons));
+  localStorage.setItem('doodle_weapon_order', JSON.stringify(settings.weaponOrder)); localStorage.setItem('doodle_enabled_weapons', JSON.stringify(settings.enabledWeapons)); localStorage.setItem('doodle_loadout_version', String(LOADOUT_VERSION));
   if (ctx.player) ctx.player.setLoadout(settings.weaponOrder, settings.enabledWeapons);
 }
 // ---------------- game state ----------------
@@ -348,6 +349,7 @@ enemies.onKill = (e, info, over) => {
 enemies.onBoss = (e) => { if (!e.alive) { hud.setBoss(null, null); game.boss = null; } else { game.boss = e; hud.setBoss(e.T.name, e.hp / e.maxHp); } };
 player.onThrow = (d) => { if (net.active) net.broadcast('nade', d); };
 player.onRocket = (d) => { if (net.active) net.broadcast('rocket', d); };
+player.onRocketGuide = (d) => { if (net.active) net.broadcast('rocketguide', d); };
 
 // ---------------- focus slash (solo only) ----------------
 const FOCUS_TIME = 2.6, FOCUS_SCALE = 0.26, FOCUS_RANGE = 24, FOCUS_MAX_CHAIN = 2, FOCUS_ARM = 0.18, DASH_SPEED = 46, KATANA_CHARGE_KILLS = 3;
@@ -414,7 +416,7 @@ function updateFocus(dt) {
 }
 
 // ---------------- team deathmatch: spawning, death, scoring ----------------
-const HOW = { rifle: 'rifle', deagle: 'desert eagle', rpg: 'rpg', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
+const HOW = { rifle: 'rifle', deagle: 'desert eagle', rpg: 'rpg', guidedrpg: 'guided rpg', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
 const howWord = (src) => HOW[src] || null;
 const spawnSpots = () => (level.arenaSpawns && level.arenaSpawns.length ? level.arenaSpawns : level.spawns);
 function arenaSpawn() {
@@ -678,7 +680,8 @@ net.on('pdead', (d, from) => {
   if (net.isHost) tallyDeath(from, d.killer);
 });
 net.on('nade', (d, from) => player.throwGrenade({ ...d, team: teamOf(from) }));
-net.on('rocket', (d, from) => player.launchRocket(null, null, { ...d, owner: from, team: teamOf(from) }));
+net.on('rocket', (d, from) => player.launchRocket(null, null, { ...d, remote: true, owner: from, team: teamOf(from) }));
+net.on('rocketguide', (d, from) => player.guideRocket(from, d));
 net.on('brk', (d) => { const br = level.breakables[d.id]; if (br) breakProp(br, null, false); });
 net.on('parry', (d) => { audio.shieldHit(player.center); input.rumble(0.35, 0.3, 60); effects.strokeBurst(player.eye.clone().addScaledVector(player.forward, 0.5), INK.ORANGE, 8, 5, { life: 0.2, size: 0.03 }); hud.kill(d.ret ? 'RETURN TO SENDER' : 'DEFLECTED', d.ret ? 25 : 0); });
 net.on('shots', (d, from) => {
@@ -808,7 +811,7 @@ function loadoutHTML() {
     <label><input type="checkbox" data-weapon-toggle="${kind}" ${kind === 'katana' || enabled.has(kind) ? 'checked' : ''} ${kind === 'katana' ? 'disabled' : ''}> ${kind === 'katana' ? 'always on' : 'enabled'}</label>
     <span class="loadoutmove"><button type="button" data-weapon-move="-1" aria-label="Move ${WEAPON_NAMES[kind]} up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-weapon-move="1" aria-label="Move ${WEAPON_NAMES[kind]} down" ${i === settings.weaponOrder.length - 1 ? 'disabled' : ''}>↓</button></span>
   </div>`; }).join('');
-  return `<div class="loadout"><div class="loadouttitle">WEAPON LOADOUT <small>enable guns and arrange their active 1–5 slot order</small></div>${rows}</div>`;
+  return `<div class="loadout"><div class="loadouttitle">WEAPON LOADOUT <small>enable guns and arrange their active 1–${WEAPON_ORDER.length} slot order</small></div>${rows}</div>`;
 }
 function settingsHTML() {
   return `<div class="settings" id="settings">

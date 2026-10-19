@@ -1,8 +1,8 @@
 // First-person player: movement (sprint/slide/wall-jump/mantle/air dash), swing-grapple, camera feel, health, weapons.
 import * as THREE from 'three';
-import { makeBody } from './physics.js';
+import { makeBody, SEE_THROUGH } from './physics.js';
 import { makeInkMaterial, INK } from './render.js';
-import { Rifle, Sniper, DesertEagle, RPG, Katana } from './weapons.js';
+import { Rifle, Sniper, DesertEagle, RPG, GuidedRPG, Katana } from './weapons.js';
 // the dome shell and anything else flagged this way cannot be hooked
 const NO_GRAPPLE = (b) => !!b.data.noGrapple;
 const STAM_FIRE = 0.09, STAM_DRAIN = 0.08, STAM_GROUND = 0.4, STAM_AIR = 0.2, STAM_MIN = 0.18, STAM_PAUSE = 0.5, PARRY_WINDOW = 0.55;
@@ -12,8 +12,9 @@ import { audio } from './audio.js';
 const G = 26, WALK = 6.6, SPRINT = 10.6, CROUCH = 3.6, ACCEL = 140, FRICTION = 8, AIR_ACCEL = 36, AIR_CAP = 7.5, JUMP = 9.6;
 const STAND_H = 1.75, CROUCH_H = 1.05, EYE_STAND = 1.6, EYE_CROUCH = 0.88;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _d = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
-export const WEAPON_ORDER = ['rifle', 'deagle', 'sniper', 'rpg', 'katana'];
-export const WEAPON_NAMES = { rifle: 'RIFLE', deagle: 'DESERT EAGLE', sniper: 'SNIPER', rpg: 'RPG', katana: 'KATANA' };
+export const WEAPON_ORDER = ['rifle', 'deagle', 'sniper', 'rpg', 'guidedrpg', 'katana'];
+export const WEAPON_NAMES = { rifle: 'RIFLE', deagle: 'DESERT EAGLE', sniper: 'SNIPER', rpg: 'RPG', guidedrpg: 'GUIDED RPG', katana: 'KATANA' };
+const ROCKET_SPEED = 46, GUIDED_ROCKET_SPEED = 36, GUIDED_TURN_RATE = 8, GUIDE_SYNC_RATE = 0.1;
 
 export class Player {
   constructor(ctx) {
@@ -23,7 +24,7 @@ export class Player {
     this.eye = new THREE.Vector3(); this.center = new THREE.Vector3(); this.forward = new THREE.Vector3(0, 0, -1); this.right = new THREE.Vector3(1, 0, 0);
     this.speed = 0; this.hurtFx = 0; this.flashFx = 0; this.lastDamageT = 10;
     this.rig = new THREE.Group(); this.camera.add(this.rig); ctx.scene.add(this.camera);
-    this.weaponByKind = new Map([['rifle', new Rifle(ctx)], ['deagle', new DesertEagle(ctx)], ['sniper', new Sniper(ctx)], ['rpg', new RPG(ctx)], ['katana', new Katana(ctx)]]);
+    this.weaponByKind = new Map([['rifle', new Rifle(ctx)], ['deagle', new DesertEagle(ctx)], ['sniper', new Sniper(ctx)], ['rpg', new RPG(ctx)], ['guidedrpg', new GuidedRPG(ctx)], ['katana', new Katana(ctx)]]);
     this.weapons = WEAPON_ORDER.map((kind) => this.weaponByKind.get(kind)); this.katanaIndex = this.weapons.findIndex((w) => w.kind === 'katana');
     for (const w of this.weaponByKind.values()) { this.rig.add(w.root); if (w.isGun) w.startReserve = w.reserve; }
     this.weaponIndex = 0; this.weapon = this.weapons[0]; this.weapon.equip(); this.returnT = 0; this.prevWeaponIndex = 0;
@@ -33,7 +34,7 @@ export class Player {
     this.dashCd = 0; this.airJumps = 1; this.blockCd = 0; this.landGraceT = 0; this.sprintToggle = false; this.lastGround = true; this.airT = 0; this._sprinting = false; this._aiming = false; this._mv = { x: 0, y: 0 };
     this.grapple = { state: 'idle', anchor: new THREE.Vector3(), hook: new THREE.Vector3(), from: new THREE.Vector3(), flyT: 0, flyDur: 0, len: 0, cd: 0, enemy: null, mover: null, blockedT: 0, t: 0, swingT: 0, hopT: 0 };
     this.deathT = 0; this.gravityScale = 1; this.dashLock = false;
-    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.rockets = []; this.nadeCd = 0; this.firing = false; this.onThrow = null; this.onRocket = null;
+    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.rockets = []; this.rocketSeq = 0; this.nadeCd = 0; this.firing = false; this.onThrow = null; this.onRocket = null; this.onRocketGuide = null;
     const rm = makeInkMaterial({ ink: INK.BLUE, fill: false, shadeBias: -0.3 });
     this.rope = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6), rm); this.rope.visible = false; ctx.scene.add(this.rope);
     const hm = makeInkMaterial({ ink: INK.BLUE }); this.hookMesh = new THREE.Group();
@@ -240,7 +241,7 @@ export class Player {
     this.updateNadeArc(this._nadeHeld ? this.nadeCharge : -1);
     this.updateNades(dt); this.updateRockets(dt);
     // ---- weapons ----
-    for (let i = 0; i < 5; i++) if (inp.pressed('slot' + (i + 1))) this.switchTo(Math.min(i, this.weapons.length - 1));
+    for (let i = 0; i < 6; i++) if (inp.pressed('slot' + (i + 1))) this.switchTo(Math.min(i, this.weapons.length - 1));
     if (inp.pressed('nextWeapon')) this.switchTo((this.weaponIndex + 1) % this.weapons.length);
     if (inp.pressed('prevWeapon')) this.switchTo((this.weaponIndex + this.weapons.length - 1) % this.weapons.length);
     const st = this._weaponState(sprinting, aiming, hs2);
@@ -326,21 +327,42 @@ export class Player {
     // other players in a versus match, decided by the thrower only
     if (n.mine && ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const dd = t.center.distanceTo(c); if (dd < R * 0.95) t.takeDamage(12 + 50 * (1 - dd / (R * 0.95)), c, { src: 'grenade' }); }
   }
-  launchRocket(pos, dir, remote = null) {
-    const ctx = this.ctx; const mine = !remote;
-    if (remote) { pos = new THREE.Vector3().fromArray(remote.pos); dir = new THREE.Vector3().fromArray(remote.dir).normalize(); audio.remoteShot('rpg', pos); }
-    else if (this.onRocket) this.onRocket({ pos: pos.toArray().map((v) => +v.toFixed(2)), dir: dir.toArray().map((v) => +v.toFixed(3)) });
-    const g = new THREE.Group(), shell = makeInkMaterial({ ink: mine ? INK.BLUE : INK.RED }), dark = makeInkMaterial({ ink: INK.BLACK });
+  launchRocket(pos, dir, options = null) {
+    const ctx = this.ctx, remote = !!(options && options.remote), mine = !remote;
+    const guided = !!(options && options.guided), kind = guided || (options && options.kind === 'guidedrpg') ? 'guidedrpg' : 'rpg';
+    const speed = guided ? GUIDED_ROCKET_SPEED : ROCKET_SPEED;
+    const id = String(options && options.id || (mine ? ++this.rocketSeq : 'remote'));
+    if (remote) { pos = new THREE.Vector3().fromArray(options.pos); dir = new THREE.Vector3().fromArray(options.dir).normalize(); audio.remoteShot('rpg', pos); }
+    else if (this.onRocket) this.onRocket({ id, kind, guided, pos: pos.toArray().map((v) => +v.toFixed(2)), dir: dir.toArray().map((v) => +v.toFixed(3)) });
+    const g = new THREE.Group(), shell = makeInkMaterial({ ink: guided ? INK.GREEN : mine ? INK.BLUE : INK.RED }), dark = makeInkMaterial({ ink: INK.BLACK });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.55, 8), shell); g.add(body);
     const nose = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.23, 8), shell); nose.position.y = 0.39; g.add(nose);
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.2, 6), dark); tail.position.y = -0.35; tail.rotation.x = Math.PI; g.add(tail);
+    if (guided) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.025, 5, 12), shell); ring.rotation.x = Math.PI / 2; ring.position.y = -0.12; g.add(ring); }
     g.position.copy(pos); g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); ctx.scene.add(g);
-    this.rockets.push({ mesh: g, pos: pos.clone(), vel: dir.clone().multiplyScalar(38), mine, owner: remote && remote.owner, ownerTeam: remote && remote.team, life: 4, trail: 0 });
+    const rocket = { id, kind, guided, speed, mesh: g, pos: pos.clone(), vel: dir.clone().multiplyScalar(speed), mine, owner: remote && options.owner, ownerTeam: remote && options.team, life: guided ? 7 : 4, trail: 0, guideNetT: 0 };
+    this.rockets.push(rocket); return rocket;
+  }
+  guideRocket(owner, data) {
+    if (!data || !Array.isArray(data.pos) || !Array.isArray(data.dir)) return false;
+    const rocket = this.rockets.find((r) => !r.mine && r.guided && r.owner === owner && r.id === String(data.id)); if (!rocket) return false;
+    _v.fromArray(data.pos); if (rocket.pos.distanceToSquared(_v) > 16) rocket.pos.copy(_v); else rocket.pos.lerp(_v, 0.55);
+    _d.fromArray(data.dir); if (_d.lengthSq() > 0.5) rocket.vel.copy(_d.normalize()).multiplyScalar(rocket.speed);
+    return true;
+  }
+  _guideRocket(rocket, dt) {
+    const ctx = this.ctx, maxDist = 300; _d.copy(this.forward); _v3.copy(this.eye).addScaledVector(_d, maxDist); let nearest = maxDist;
+    const hits = [ctx.world.raycast(this.eye, _d, maxDist, SEE_THROUGH), ctx.enemies.raycast(this.eye, _d, maxDist), ctx.raycastPlayers ? ctx.raycastPlayers(this.eye, _d, maxDist) : null];
+    for (const hit of hits) if (hit && hit.dist < nearest) { nearest = hit.dist; _v3.copy(hit.point); }
+    _d.subVectors(_v3, rocket.pos); if (rocket.pos.distanceToSquared(_v3) < 0.25 || _d.lengthSq() < 1e-6) return;
+    _d.normalize().multiplyScalar(rocket.speed); rocket.vel.lerp(_d, 1 - Math.exp(-GUIDED_TURN_RATE * dt)).normalize().multiplyScalar(rocket.speed);
+    rocket.guideNetT -= dt;
+    if (rocket.guideNetT <= 0 && this.onRocketGuide) { rocket.guideNetT = GUIDE_SYNC_RATE; this.onRocketGuide({ id: rocket.id, pos: rocket.pos.toArray().map((v) => +v.toFixed(2)), dir: _d.copy(rocket.vel).normalize().toArray().map((v) => +v.toFixed(3)) }); }
   }
   updateRockets(dt) {
     const ctx = this.ctx, world = ctx.world;
     for (let i = this.rockets.length - 1; i >= 0; i--) {
-      const r = this.rockets[i]; r.life -= dt; r.trail -= dt; _v2.copy(r.pos); r.pos.addScaledVector(r.vel, dt); _d.subVectors(r.pos, _v2); const len = _d.length(); let impact = null;
+      const r = this.rockets[i]; r.life -= dt; r.trail -= dt; if (r.guided && r.mine && this.alive) this._guideRocket(r, dt); _v2.copy(r.pos); r.pos.addScaledVector(r.vel, dt); _d.subVectors(r.pos, _v2); const len = _d.length(); let impact = null;
       if (len > 1e-6) {
         _d.divideScalar(len); const hitW = world.raycast(_v2, _d, len + 0.18); if (hitW) impact = { dist: hitW.dist, point: hitW.point };
         if (r.mine) {
@@ -352,7 +374,7 @@ export class Player {
         if (impact) r.pos.copy(impact.point); this.explodeRocket(r); ctx.scene.remove(r.mesh); this.rockets.splice(i, 1); continue;
       }
       r.mesh.position.copy(r.pos); r.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), _v.copy(r.vel).normalize());
-      if (r.trail <= 0) { r.trail = 0.055; ctx.effects.smoke(r.pos, _v.copy(r.vel).normalize().negate(), 1); ctx.effects.strokeBurst(r.pos, INK.ORANGE, 2, 2.5, { life: 0.12, size: 0.025, gravity: 0, drag: 5 }); }
+      if (r.trail <= 0) { r.trail = 0.055; ctx.effects.smoke(r.pos, _v.copy(r.vel).normalize().negate(), 1); ctx.effects.strokeBurst(r.pos, r.guided ? INK.GREEN : INK.ORANGE, r.guided ? 3 : 2, r.guided ? 3.5 : 2.5, { life: 0.12, size: 0.025, gravity: 0, drag: 5 }); }
     }
   }
   explodeRocket(r) {
@@ -360,7 +382,7 @@ export class Player {
     if (!r.mine) return;
     ctx.enemies.blastEnemies(c, radius, 175, null); if (ctx.blastBreakables) ctx.blastBreakables(c, radius);
     const selfDist = this.center.distanceTo(c); if (this.alive && selfDist < radius * 0.82) { this.takeDamage(16 + 56 * (1 - selfDist / (radius * 0.82)), c); this.knockback(_v.subVectors(this.center, c).normalize(), 13); }
-    if (ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const d = t.center.distanceTo(c); if (d < radius) t.takeDamage(42 + 78 * (1 - d / radius), c, { src: 'rpg' }); }
+    if (ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const d = t.center.distanceTo(c); if (d < radius) t.takeDamage(42 + 78 * (1 - d / radius), c, { src: r.kind || 'rpg' }); }
   }
   _weaponState(sprinting, aiming, hs) {
     const inp = this.ctx.input, b = this.body;

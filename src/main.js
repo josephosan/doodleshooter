@@ -58,13 +58,13 @@ const ffaColor = (id) => FFA_COLORS.find((c) => c.id === id) || FFA_COLORS[0];
 const validFfaColor = (id) => FFA_COLORS.some((c) => c.id === id);
 let myColor = validFfaColor(localStorage.getItem('doodle_ffa_color')) ? localStorage.getItem('doodle_ffa_color') : FFA_COLORS[Math.floor(Math.random() * FFA_COLORS.length)].id;
 const GUN_KINDS = WEAPON_ORDER.filter((kind) => kind !== 'katana');
-const LOADOUT_VERSION = 2;
+const LOADOUT_VERSION = 3;
 function storedWeaponOrder() {
-  try { const raw = JSON.parse(localStorage.getItem('doodle_weapon_order') || '[]'); if (Array.isArray(raw)) { const clean = [...new Set(raw)].filter((kind) => WEAPON_ORDER.includes(kind)); for (const kind of WEAPON_ORDER) if (!clean.includes(kind)) clean.push(kind); return clean; } } catch (error) { /* use defaults */ }
+  try { const raw = JSON.parse(localStorage.getItem('doodle_weapon_order') || '[]'); if (Array.isArray(raw)) { const clean = [...new Set(raw)].filter((kind) => WEAPON_ORDER.includes(kind)); const addCam = !clean.includes('camrpg'); for (const kind of WEAPON_ORDER) if (!clean.includes(kind)) clean.push(kind); if (addCam) { clean.splice(clean.indexOf('camrpg'), 1); clean.splice(Math.max(0, clean.indexOf('katana')), 0, 'camrpg'); } return clean; } } catch (error) { /* use defaults */ }
   return [...WEAPON_ORDER];
 }
 function storedEnabledWeapons() {
-  try { const saved = localStorage.getItem('doodle_enabled_weapons'); if (saved !== null) { const raw = JSON.parse(saved); if (Array.isArray(raw)) { const chosen = new Set(raw); if (Number(localStorage.getItem('doodle_loadout_version') || 0) < LOADOUT_VERSION) chosen.add('guidedrpg'); return GUN_KINDS.filter((kind) => chosen.has(kind)); } } } catch (error) { /* use defaults */ }
+  try { const saved = localStorage.getItem('doodle_enabled_weapons'); if (saved !== null) { const raw = JSON.parse(saved); if (Array.isArray(raw)) { const chosen = new Set(raw); const version = Number(localStorage.getItem('doodle_loadout_version') || 0); if (version < 2) chosen.add('guidedrpg'); if (version < LOADOUT_VERSION) chosen.add('camrpg'); return GUN_KINDS.filter((kind) => chosen.has(kind)); } } } catch (error) { /* use defaults */ }
   return [...GUN_KINDS];
 }
 const settings = { sens: Number(localStorage.getItem('doodle_sens') || 100), invert: localStorage.getItem('doodle_invert') === '1', weaponOrder: storedWeaponOrder(), enabledWeapons: storedEnabledWeapons() };
@@ -416,7 +416,7 @@ function updateFocus(dt) {
 }
 
 // ---------------- team deathmatch: spawning, death, scoring ----------------
-const HOW = { rifle: 'rifle', deagle: 'desert eagle', rpg: 'rpg', guidedrpg: 'guided rpg', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
+const HOW = { rifle: 'rifle', deagle: 'desert eagle', rpg: 'rpg', guidedrpg: 'guided rpg', camrpg: 'missile cam rpg', shotgun: 'shotgun', sniper: 'sniper', katana: 'katana', grenade: 'grenade', deflect: 'their own bullet' };
 const howWord = (src) => HOW[src] || null;
 const spawnSpots = () => (level.arenaSpawns && level.arenaSpawns.length ? level.arenaSpawns : level.spawns);
 function arenaSpawn() {

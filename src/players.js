@@ -8,7 +8,7 @@ import { buildHumanoid, buildWeaponProp } from './enemies.js';
 import { clamp, damp, angleLerp, wrapAngle } from './util.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
-const WEAPON_KINDS = ['rifle', 'sniper', 'katana', 'deagle', 'rpg', 'guidedrpg'];
+const WEAPON_KINDS = ['rifle', 'sniper', 'katana', 'deagle', 'rpg', 'guidedrpg', 'camrpg'];
 const remoteWeaponKind = (value) => {
   if (typeof value === 'string' && WEAPON_KINDS.includes(value)) return value;
   const legacy = ['rifle', 'sniper', 'katana']; return legacy[Number(value)] || 'rifle';
@@ -77,7 +77,7 @@ export class RemotePlayer {
   setWeapon(value) {
     const kind = remoteWeaponKind(value); if (kind === this.weaponKind && this.J.gun.children.length) return; this.weaponKind = kind; this.weaponIndex = WEAPON_KINDS.indexOf(kind);
     const gun = this.J.gun; while (gun.children.length) gun.remove(gun.children[0]);
-    buildWeaponProp(gun, this.mat, this.solid, { weapon: kind === 'katana' ? 'blade' : kind === 'guidedrpg' ? 'rpg' : kind });
+    buildWeaponProp(gun, this.mat, this.solid, { weapon: kind === 'katana' ? 'blade' : kind === 'guidedrpg' || kind === 'camrpg' ? 'rpg' : kind });
   }
   push(snap, t) {
     if (!snap) return;

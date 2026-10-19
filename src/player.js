@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { makeBody, SEE_THROUGH } from './physics.js';
 import { makeInkMaterial, INK } from './render.js';
-import { Rifle, Sniper, DesertEagle, RPG, GuidedRPG, Katana } from './weapons.js';
+import { Rifle, Sniper, DesertEagle, RPG, GuidedRPG, CameraRPG, Katana } from './weapons.js';
 // the dome shell and anything else flagged this way cannot be hooked
 const NO_GRAPPLE = (b) => !!b.data.noGrapple;
 const STAM_FIRE = 0.09, STAM_DRAIN = 0.08, STAM_GROUND = 0.4, STAM_AIR = 0.2, STAM_MIN = 0.18, STAM_PAUSE = 0.5, PARRY_WINDOW = 0.55;
@@ -12,9 +12,9 @@ import { audio } from './audio.js';
 const G = 26, WALK = 6.6, SPRINT = 10.6, CROUCH = 3.6, ACCEL = 140, FRICTION = 8, AIR_ACCEL = 36, AIR_CAP = 7.5, JUMP = 9.6;
 const STAND_H = 1.75, CROUCH_H = 1.05, EYE_STAND = 1.6, EYE_CROUCH = 0.88;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _d = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
-export const WEAPON_ORDER = ['rifle', 'deagle', 'sniper', 'rpg', 'guidedrpg', 'katana'];
-export const WEAPON_NAMES = { rifle: 'RIFLE', deagle: 'DESERT EAGLE', sniper: 'SNIPER', rpg: 'RPG', guidedrpg: 'GUIDED RPG', katana: 'KATANA' };
-const ROCKET_SPEED = 46, GUIDED_ROCKET_SPEED = 36, GUIDED_TURN_RATE = 8, GUIDE_SYNC_RATE = 0.1;
+export const WEAPON_ORDER = ['rifle', 'deagle', 'sniper', 'rpg', 'guidedrpg', 'camrpg', 'katana'];
+export const WEAPON_NAMES = { rifle: 'RIFLE', deagle: 'DESERT EAGLE', sniper: 'SNIPER', rpg: 'RPG', guidedrpg: 'GUIDED RPG', camrpg: 'MISSILE CAM RPG', katana: 'KATANA' };
+const ROCKET_SPEED = 46, GUIDED_ROCKET_SPEED = 36, CAM_ROCKET_SPEED = 40, GUIDED_TURN_RATE = 8, CAM_TURN_RATE = 10, GUIDE_SYNC_RATE = 0.1;
 
 export class Player {
   constructor(ctx) {
@@ -24,7 +24,7 @@ export class Player {
     this.eye = new THREE.Vector3(); this.center = new THREE.Vector3(); this.forward = new THREE.Vector3(0, 0, -1); this.right = new THREE.Vector3(1, 0, 0);
     this.speed = 0; this.hurtFx = 0; this.flashFx = 0; this.lastDamageT = 10;
     this.rig = new THREE.Group(); this.camera.add(this.rig); ctx.scene.add(this.camera);
-    this.weaponByKind = new Map([['rifle', new Rifle(ctx)], ['deagle', new DesertEagle(ctx)], ['sniper', new Sniper(ctx)], ['rpg', new RPG(ctx)], ['guidedrpg', new GuidedRPG(ctx)], ['katana', new Katana(ctx)]]);
+    this.weaponByKind = new Map([['rifle', new Rifle(ctx)], ['deagle', new DesertEagle(ctx)], ['sniper', new Sniper(ctx)], ['rpg', new RPG(ctx)], ['guidedrpg', new GuidedRPG(ctx)], ['camrpg', new CameraRPG(ctx)], ['katana', new Katana(ctx)]]);
     this.weapons = WEAPON_ORDER.map((kind) => this.weaponByKind.get(kind)); this.katanaIndex = this.weapons.findIndex((w) => w.kind === 'katana');
     for (const w of this.weaponByKind.values()) { this.rig.add(w.root); if (w.isGun) w.startReserve = w.reserve; }
     this.weaponIndex = 0; this.weapon = this.weapons[0]; this.weapon.equip(); this.returnT = 0; this.prevWeaponIndex = 0;
@@ -34,7 +34,7 @@ export class Player {
     this.dashCd = 0; this.airJumps = 1; this.blockCd = 0; this.landGraceT = 0; this.sprintToggle = false; this.lastGround = true; this.airT = 0; this._sprinting = false; this._aiming = false; this._mv = { x: 0, y: 0 };
     this.grapple = { state: 'idle', anchor: new THREE.Vector3(), hook: new THREE.Vector3(), from: new THREE.Vector3(), flyT: 0, flyDur: 0, len: 0, cd: 0, enemy: null, mover: null, blockedT: 0, t: 0, swingT: 0, hopT: 0 };
     this.deathT = 0; this.gravityScale = 1; this.dashLock = false;
-    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.rockets = []; this.rocketSeq = 0; this.nadeCd = 0; this.firing = false; this.onThrow = null; this.onRocket = null; this.onRocketGuide = null;
+    this.isLocal = true; this.team = 0; this.name = 'you'; this.grenades = 3; this.maxGrenades = 5; this.nades = []; this.rockets = []; this.rocketSeq = 0; this.missileCam = null; this.nadeCd = 0; this.firing = false; this.onThrow = null; this.onRocket = null; this.onRocketGuide = null;
     const rm = makeInkMaterial({ ink: INK.BLUE, fill: false, shadeBias: -0.3 });
     this.rope = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6), rm); this.rope.visible = false; ctx.scene.add(this.rope);
     const hm = makeInkMaterial({ ink: INK.BLUE }); this.hookMesh = new THREE.Group();
@@ -42,6 +42,7 @@ export class Player {
     this.hookMesh.visible = false; ctx.scene.add(this.hookMesh);
   }
   reset(pos, { keepRockets = false } = {}) {
+    this._endMissileCam();
     this.nadeCharge = 0; this._nadeHeld = false; if (this._arc) this.updateNadeArc(-1); this.grapStam = 1; this.blockHeld = 0;
     const b = this.body; b.pos.copy(pos); b.vel.set(0, 0, 0); b.onGround = false; b.height = STAND_H;
     this.hp = this.maxHp; this.alive = true; this.yaw = 0; this.pitch = 0; this.roll = 0; this.hurtFx = 0; this.flashFx = 0; this.crouching = false; this.sliding = false; this.deathT = 0; this.lastDamageT = 10; this.dashCd = 0; this.airJumps = 1; this.gravityScale = 1; this.dashLock = false;
@@ -50,7 +51,7 @@ export class Player {
     this.switchTo(0, true); this.rig.visible = true; this.eyeH = EYE_STAND; this.grenades = 3; this.clearNades(); if (!keepRockets) this.clearRockets();
   }
   clearNades() { for (const n of this.nades) this.ctx.scene.remove(n.mesh); this.nades.length = 0; }
-  clearRockets() { for (const r of this.rockets) this.ctx.scene.remove(r.mesh); this.rockets.length = 0; }
+  clearRockets() { this._endMissileCam(); for (const r of this.rockets) this.ctx.scene.remove(r.mesh); this.rockets.length = 0; }
   get isBlocking() { return this.weapon.kind === 'katana' && this.weapon.blocking; }
   aimDir(spread = 0) { const d = this.forward.clone(); if (spread > 0) { d.addScaledVector(this.right, rand(-spread, spread)); d.y += rand(-spread, spread); d.normalize(); } return d; }
   recoil(p, y) { this.pitch = clamp(this.pitch + p * 0.55, -1.5, 1.5); this.recoilPitch.kick(p * 22); this.recoilYaw.kick(y * 30); }
@@ -77,7 +78,7 @@ export class Player {
     const selected = Math.max(0, this.weapons.findIndex((w) => w.kind === before)); this.weaponIndex = selected; this.weapon = this.weapons[selected]; this.weapon.equip();
     this.prevWeaponIndex = Math.min(this.prevWeaponIndex, this.weapons.length - 1); this.ctx.hud.setWeapon(this.weapon.name, this.weapon.hint); this.ctx.hud.setCrosshairMode(this.weapon.kind === 'katana' ? 'katana' : '');
   }
-  addAmmoAll(frac = 0.5) { for (const w of this.weaponByKind.values()) if (w.isGun) w.addAmmo(w.kind === 'rpg' ? 1 : Math.round(w.maxReserve * frac)); }
+  addAmmoAll(frac = 0.5) { for (const w of this.weaponByKind.values()) if (w.isGun) w.addAmmo(w.kind.endsWith('rpg') ? 1 : Math.round(w.maxReserve * frac)); }
   takeDamage(amount, fromPos) {
     if (!this.alive) return;
     this.hp -= amount; this.lastDamageT = 0; this.hurtFx = Math.min(1, this.hurtFx + amount / 40);
@@ -116,7 +117,7 @@ export class Player {
     this.ctx.effects.sparks(_v2.copy(this.eye).addScaledVector(this.forward, 0.8), this.forward.clone().negate(), INK.ORANGE, 12, 8);
     this.ctx.game.addScore(40, 'BLOCKED'); this.ctx.input.rumble(0.6, 0.6, 100); return true;
   }
-  die() { this.alive = false; this.deathT = 0; audio.death(); this.detachGrapple(false); this.ctx.game.onPlayerDeath(); }
+  die() { this.alive = false; this._endMissileCam(); this.deathT = 0; audio.death(); this.detachGrapple(false); this.ctx.game.onPlayerDeath(); }
   idleCam(t) {
     const c = this.camera; c.position.set(Math.sin(t * 0.08) * 70, 30 + Math.sin(t * 0.23) * 4, Math.cos(t * 0.08) * 70); c.lookAt(0, 10, 0); this.rig.visible = false;
     this.eye.copy(c.position); this.center.copy(c.position); c.getWorldDirection(this.forward); this.right.set(this.forward.z, 0, -this.forward.x).normalize();
@@ -136,6 +137,7 @@ export class Player {
       this.updateNades(dt); this.updateRockets(dt); this._updateCamera(dt); this.weapon.animate(dt, this._weaponState(false, false, 0)); return;
     }
     this.rig.visible = true;
+    if (this.missileCam) { this._updateCameraGuidance(dt); return; }
     // ---- look ----
     const lookMul = this._aiming ? (this.weapon.scope ? 0.38 : 0.62) : 1;
     this.yaw += inp.look.x * lookMul; this.pitch = clamp(this.pitch + inp.look.y * lookMul, -1.5, 1.5);
@@ -241,7 +243,7 @@ export class Player {
     this.updateNadeArc(this._nadeHeld ? this.nadeCharge : -1);
     this.updateNades(dt); this.updateRockets(dt);
     // ---- weapons ----
-    for (let i = 0; i < 6; i++) if (inp.pressed('slot' + (i + 1))) this.switchTo(Math.min(i, this.weapons.length - 1));
+    for (let i = 0; i < WEAPON_ORDER.length; i++) if (inp.pressed('slot' + (i + 1))) this.switchTo(Math.min(i, this.weapons.length - 1));
     if (inp.pressed('nextWeapon')) this.switchTo((this.weaponIndex + 1) % this.weapons.length);
     if (inp.pressed('prevWeapon')) this.switchTo((this.weaponIndex + this.weapons.length - 1) % this.weapons.length);
     const st = this._weaponState(sprinting, aiming, hs2);
@@ -329,19 +331,25 @@ export class Player {
   }
   launchRocket(pos, dir, options = null) {
     const ctx = this.ctx, remote = !!(options && options.remote), mine = !remote;
-    const guided = !!(options && options.guided), kind = guided || (options && options.kind === 'guidedrpg') ? 'guidedrpg' : 'rpg';
-    const speed = guided ? GUIDED_ROCKET_SPEED : ROCKET_SPEED;
+    const requestedKind = options && options.kind, cameraGuided = requestedKind === 'camrpg' || !!(options && options.cameraGuided);
+    const kind = cameraGuided ? 'camrpg' : requestedKind === 'guidedrpg' || !!(options && options.guided) ? 'guidedrpg' : 'rpg';
+    const guided = kind !== 'rpg', speed = cameraGuided ? CAM_ROCKET_SPEED : guided ? GUIDED_ROCKET_SPEED : ROCKET_SPEED;
     const id = String(options && options.id || (mine ? ++this.rocketSeq : 'remote'));
     if (remote) { pos = new THREE.Vector3().fromArray(options.pos); dir = new THREE.Vector3().fromArray(options.dir).normalize(); audio.remoteShot('rpg', pos); }
-    else if (this.onRocket) this.onRocket({ id, kind, guided, pos: pos.toArray().map((v) => +v.toFixed(2)), dir: dir.toArray().map((v) => +v.toFixed(3)) });
-    const g = new THREE.Group(), shell = makeInkMaterial({ ink: guided ? INK.GREEN : mine ? INK.BLUE : INK.RED }), dark = makeInkMaterial({ ink: INK.BLACK });
+    else if (this.onRocket) this.onRocket({ id, kind, guided, cameraGuided, pos: pos.toArray().map((v) => +v.toFixed(2)), dir: dir.toArray().map((v) => +v.toFixed(3)) });
+    const rocketInk = cameraGuided ? INK.PINK : guided ? INK.GREEN : mine ? INK.BLUE : INK.RED;
+    const g = new THREE.Group(), shell = makeInkMaterial({ ink: rocketInk }), dark = makeInkMaterial({ ink: INK.BLACK });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.55, 8), shell); g.add(body);
     const nose = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.23, 8), shell); nose.position.y = 0.39; g.add(nose);
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.2, 6), dark); tail.position.y = -0.35; tail.rotation.x = Math.PI; g.add(tail);
     if (guided) { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.025, 5, 12), shell); ring.rotation.x = Math.PI / 2; ring.position.y = -0.12; g.add(ring); }
+    if (cameraGuided) { const lens = new THREE.Mesh(new THREE.SphereGeometry(0.065, 7, 5), dark); lens.position.y = 0.43; lens.scale.y = 0.45; g.add(lens); }
     g.position.copy(pos); g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); ctx.scene.add(g);
-    const rocket = { id, kind, guided, speed, mesh: g, pos: pos.clone(), vel: dir.clone().multiplyScalar(speed), mine, owner: remote && options.owner, ownerTeam: remote && options.team, life: guided ? 7 : 4, trail: 0, guideNetT: 0 };
-    this.rockets.push(rocket); return rocket;
+    const rocket = { id, kind, guided, cameraGuided, speed, mesh: g, pos: pos.clone(), vel: dir.clone().multiplyScalar(speed), mine, owner: remote && options.owner, ownerTeam: remote && options.team, life: cameraGuided ? 8 : guided ? 7 : 4, trail: 0, guideNetT: 0,
+      controlYaw: Math.atan2(-dir.x, -dir.z), controlPitch: Math.asin(clamp(dir.y, -1, 1)) };
+    this.rockets.push(rocket);
+    if (mine && cameraGuided && this.alive) { this._endMissileCam(); this.missileCam = rocket; this.rig.visible = false; this._aiming = false; this.ctx.hud.setAds(false); this.ctx.hud.setScope(false); }
+    return rocket;
   }
   guideRocket(owner, data) {
     if (!data || !Array.isArray(data.pos) || !Array.isArray(data.dir)) return false;
@@ -356,13 +364,25 @@ export class Player {
     for (const hit of hits) if (hit && hit.dist < nearest) { nearest = hit.dist; _v3.copy(hit.point); }
     _d.subVectors(_v3, rocket.pos); if (rocket.pos.distanceToSquared(_v3) < 0.25 || _d.lengthSq() < 1e-6) return;
     _d.normalize().multiplyScalar(rocket.speed); rocket.vel.lerp(_d, 1 - Math.exp(-GUIDED_TURN_RATE * dt)).normalize().multiplyScalar(rocket.speed);
+    this._broadcastRocketGuide(rocket, dt);
+  }
+  _steerCameraRocket(rocket, dt) {
+    const look = this.ctx.input.look;
+    rocket.controlYaw += look.x * 1.15; rocket.controlPitch = clamp(rocket.controlPitch + look.y * 1.15, -1.35, 1.35);
+    _d.set(-Math.sin(rocket.controlYaw) * Math.cos(rocket.controlPitch), Math.sin(rocket.controlPitch), -Math.cos(rocket.controlYaw) * Math.cos(rocket.controlPitch));
+    rocket.vel.lerp(_d.multiplyScalar(rocket.speed), 1 - Math.exp(-CAM_TURN_RATE * dt)).normalize().multiplyScalar(rocket.speed);
+    this._broadcastRocketGuide(rocket, dt);
+  }
+  _broadcastRocketGuide(rocket, dt) {
     rocket.guideNetT -= dt;
     if (rocket.guideNetT <= 0 && this.onRocketGuide) { rocket.guideNetT = GUIDE_SYNC_RATE; this.onRocketGuide({ id: rocket.id, pos: rocket.pos.toArray().map((v) => +v.toFixed(2)), dir: _d.copy(rocket.vel).normalize().toArray().map((v) => +v.toFixed(3)) }); }
   }
   updateRockets(dt) {
     const ctx = this.ctx, world = ctx.world;
     for (let i = this.rockets.length - 1; i >= 0; i--) {
-      const r = this.rockets[i]; r.life -= dt; r.trail -= dt; if (r.guided && r.mine && this.alive) this._guideRocket(r, dt); _v2.copy(r.pos); r.pos.addScaledVector(r.vel, dt); _d.subVectors(r.pos, _v2); const len = _d.length(); let impact = null;
+      const r = this.rockets[i]; r.life -= dt; r.trail -= dt;
+      if (r.mine && this.alive) { if (r.cameraGuided && this.missileCam === r) this._steerCameraRocket(r, dt); else if (r.kind === 'guidedrpg') this._guideRocket(r, dt); }
+      _v2.copy(r.pos); r.pos.addScaledVector(r.vel, dt); _d.subVectors(r.pos, _v2); const len = _d.length(); let impact = null;
       if (len > 1e-6) {
         _d.divideScalar(len); const hitW = world.raycast(_v2, _d, len + 0.18); if (hitW) impact = { dist: hitW.dist, point: hitW.point };
         if (r.mine) {
@@ -371,10 +391,10 @@ export class Player {
         }
       }
       if (impact || r.life <= 0) {
-        if (impact) r.pos.copy(impact.point); this.explodeRocket(r); ctx.scene.remove(r.mesh); this.rockets.splice(i, 1); continue;
+        if (impact) r.pos.copy(impact.point); this.explodeRocket(r); if (this.missileCam === r) this._endMissileCam(); ctx.scene.remove(r.mesh); this.rockets.splice(i, 1); continue;
       }
       r.mesh.position.copy(r.pos); r.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), _v.copy(r.vel).normalize());
-      if (r.trail <= 0) { r.trail = 0.055; ctx.effects.smoke(r.pos, _v.copy(r.vel).normalize().negate(), 1); ctx.effects.strokeBurst(r.pos, r.guided ? INK.GREEN : INK.ORANGE, r.guided ? 3 : 2, r.guided ? 3.5 : 2.5, { life: 0.12, size: 0.025, gravity: 0, drag: 5 }); }
+      if (r.trail <= 0) { r.trail = 0.055; ctx.effects.smoke(r.pos, _v.copy(r.vel).normalize().negate(), 1); ctx.effects.strokeBurst(r.pos, r.cameraGuided ? INK.PINK : r.guided ? INK.GREEN : INK.ORANGE, r.guided ? 3 : 2, r.guided ? 3.5 : 2.5, { life: 0.12, size: 0.025, gravity: 0, drag: 5 }); }
     }
   }
   explodeRocket(r) {
@@ -383,6 +403,27 @@ export class Player {
     ctx.enemies.blastEnemies(c, radius, 175, null); if (ctx.blastBreakables) ctx.blastBreakables(c, radius);
     const selfDist = this.center.distanceTo(c); if (this.alive && selfDist < radius * 0.82) { this.takeDamage(16 + 56 * (1 - selfDist / (radius * 0.82)), c); this.knockback(_v.subVectors(this.center, c).normalize(), 13); }
     if (ctx.targets) for (const t of ctx.targets()) { if (t.isLocal || !t.alive || (ctx.canHurt && !ctx.canHurt(t))) continue; const d = t.center.distanceTo(c); if (d < radius) t.takeDamage(42 + 78 * (1 - d / radius), c, { src: r.kind || 'rpg' }); }
+  }
+  _updateCameraGuidance(dt) {
+    const ctx = this.ctx, b = this.body;
+    this._mv = { x: 0, y: 0 }; this._sprinting = false; this._aiming = false; this.firing = false;
+    b.vel.x = damp(b.vel.x, 0, 5, dt); b.vel.z = damp(b.vel.z, 0, 5, dt); if (!b.onGround) b.vel.y -= G * dt; ctx.world.moveBody(b, dt);
+    this.eye.set(b.pos.x, b.pos.y + this.eyeH, b.pos.z); this.center.set(b.pos.x, b.pos.y + b.height * 0.55, b.pos.z);
+    this.updateNades(dt); this.updateRockets(dt);
+    if (this.missileCam) this._updateMissileCamera(dt); else this._updateCamera(dt);
+    const st = this._weaponState(false, false, Math.hypot(b.vel.x, b.vel.z)); st.fire = false; st.firePressed = false; st.blockFire = true; this.weapon.animate(dt, st);
+    ctx.hud.setAds(false); ctx.hud.setScope(false);
+  }
+  _updateMissileCamera(dt) {
+    const r = this.missileCam; if (!r) return;
+    const cam = this.camera; _v.copy(r.vel).normalize();
+    cam.position.copy(r.pos).addScaledVector(_v, -0.72); cam.position.y += 0.2;
+    _v2.copy(r.pos).addScaledVector(_v, 10); cam.up.set(0, 1, 0); cam.lookAt(_v2);
+    this.fov = damp(this.fov, 88, 12, dt); if (Math.abs(cam.fov - this.fov) > 0.01) { cam.fov = this.fov; cam.updateProjectionMatrix(); }
+    this.rig.visible = false; this.hurtFx = damp(this.hurtFx, 0, 3, dt); this.flashFx = damp(this.flashFx, 0, 10, dt);
+  }
+  _endMissileCam() {
+    if (!this.missileCam) return; this.missileCam = null; this.rig.visible = this.alive; this.camera.up.set(0, 1, 0);
   }
   _weaponState(sprinting, aiming, hs) {
     const inp = this.ctx.input, b = this.body;

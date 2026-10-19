@@ -46,7 +46,7 @@ requests. Accepting a duel opens a reserved two-player private FFA lobby for the
 | Reload | R | □ |
 | Grenade (hold to throw further) | G | R3 or d-pad up |
 | Katana dash (gauge lit) | both mouse buttons or X | L2 + R2 |
-| Weapons | 1-6 / wheel | △, d-pad |
+| Weapons | 1-7 / wheel | △, d-pad |
 | Scoreboard (online) | Tab | Create |
 | Menu | Esc | Options |
 
@@ -54,10 +54,10 @@ On-screen hints follow whichever device you touched last.
 
 ## Weapons and gear
 
-Rifle, Desert Eagle, sniper (with scope), normal and guided RPGs with ten rockets each, and a katana. The Settings loadout editor
+Rifle, Desert Eagle, sniper (with scope), normal, crosshair-guided, and missile-camera RPGs with ten rockets each, and a katana. The Settings loadout editor
 lets each player enable or disable guns and reorder their active number slots. RPG rockets use splash
 damage, can hurt their owner at close range, and start with one loaded plus nine reserve (ten total).
-The Guided RPG steers toward the live crosshair until impact while the normal RPG fires a faster straight rocket. Holding block with the katana parries
+The Guided RPG steers toward the live crosshair until impact, the Missile Cam RPG switches to an onboard chase camera and follows mouse/right-stick steering, and the normal RPG fires a faster straight rocket. Holding block with the katana parries
 some incoming bullets and returns a share of them. Katana kills charge a gauge; when it is lit you
 can dash to a marked enemy and execute it (solo only). Grenades bounce, then go off in a thick orange blast that scorches the paper; holding the
 button winds up a longer throw and shows the arc. The grapple runs on breath: hanging drains it,
